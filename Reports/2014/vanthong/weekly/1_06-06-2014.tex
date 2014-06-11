@@ -1,0 +1,116 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=java,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Objectifs et Travaux effectués}
+\subsection {Initiation aux outils de travail collaboratif}
+    \begin{enumerate}
+        \item Création d'un compte sur GitHub et Trello
+        \item Fork du repository \textbf{feelpp} sur GitHub
+        \item Clonage du projet à partir du fork sur \emph{@irma-atlas}
+    \end{enumerate}
+\subsection {Documentation sur les structures de maillage \emph{gmsh}} 
+        Un fichier au format \emph{.geo} est utilisé pour stocker la structure géométrique du domaine. Dans un premier temps, on retrouve les coordonnées des points et leur identifiant sur chaque ligne du fichier. Ensuite chaque nouvelle structure s'appuie sur les structures définies précédémment, d'où l'importance des identifiants.
+
+        Un fichier de maillage au format \emph{.msh} est organisé en blocs de données. Chacun de ces blocs est décrit dans une sous-section, dans l'ordre d'apparition dans le fichier de maillage.         
+
+        Voici les blocs essentiels : 
+        \begin {enumerate}
+            \item Informations générales sur le fichier
+            \item Définition des noeuds (leur nombre et leurs coordonnées)
+            \item Définition des éléments (triangles, quadrangles, tétraèdres, ...)
+        \end {enumerate}
+\subsection {Première compilation}
+    \begin{enumerate}
+        \item Ajout d'un nouveau fichier \emph{myloadmesh.cpp} et du fichier config associé \emph{myloadmesh.cfg} qui s'inspire fortement du fichier \emph{loadmesh.cpp} du tutoriel.
+
+        Ce bout de code ne fait que charger un maillage \emph{.msh ou .geo} pour l'instant
+\newpage
+\begin {lstlisting}
+#include <feel/feelfilters/loadmesh.hpp>
+#include <feel/feelvf/integrator.hpp>
+
+int main( int argc, char** argv )
+{
+    using namespace Feel;
+
+    Environment env( _argc=argc, _argv=argv,
+                     _about=about(_name="myloadmesh",
+                                  _author="Benjamin Vanthong",
+                                  _email="benjamin.vanthong@gmail.com") );
+
+
+    auto mesh = loadMesh(_mesh=new Mesh<Simplex<2>>,
+                         _filename=option(_name="gmsh.filename").as<std::string>() );
+    
+    std::cout << "File name : " << option(_name="gmsh.filename").as<std::string>()<< std::endl ;
+}
+\end{lstlisting}
+    \item Ajout du nouveau fichier dans la liste des dépendances dans le \emph{CMakeList.txt}
+    \item Faire un make dans le dossier \emph{build} pour compiler
+    \end{enumerate}
+\subsection {Implémentation de la fonction exporter au format HDF5}
+    \begin {enumerate}
+    \item Lire la documentation
+    \item S'inspirer du fichier \emph{exporter.cpp} et \emph{exportergmsh.cpp}
+    \end{enumerate}
+\subsection {Feel++ Coding Style}
+    \begin{enumerate}
+    \item Lecture des règles
+    \item Modification du .vimrc pour avoir des tabulations qui font quatre espaces
+    \end {enumerate}
+
+\subsection {Problèmes rencontrés}
+    \begin{enumerate}
+    \item Erreur de Compilation
+
+    \textbf{Solution : } Ne pas oublier de se connecter en unstable, compiler le projet dans un sous-dossier de \textbf{/data/vanthong/}, utiliser \emph{cmake} avec les bons arguments pour générer le \emph{Makefile}
+    \item Mauvaise compréhension des tâches de travail.
+    \end {enumerate}
+\end{document}
