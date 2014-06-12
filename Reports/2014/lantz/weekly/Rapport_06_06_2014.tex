@@ -1,0 +1,168 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=python,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Cette première semaine de stage fût l'occasion de s'intéresser au Wrapping Python, et principalement aux différentes manières de l'appliquer avec SWIG et BOOST PYTHON.C'était également l'opportunité de s'initier à différents logiciels comme Trello ou encore Github.
+
+\subsection{Trello et Github}
+
+Durant ce stage,nous allons avoir besoin des deux plateformes de travail suivantes : Trello et Github.\\
+
+Trello permet de créer, d'organiser et de compléter des taches au sein d'un groupe de travail. Cela permet de situer ce qu'il faut faire, ce qui est en cours et ce qui est terminé.\\
+
+Github, quand à lui, est une plateforme de travail participatif qui permet la création,
+le stockage et la modification de fichiers entre plusieurs personnes et sur plusieurs branches différentes. Chaque modification est alors présenté sous forme de commit, qui sera selon la qualité, insérer ou non au projet principal.\\
+
+L'un des intérêts principal de Github est de conserver l'arborescence de l'ensemble des modifications du projet, et donc permet de récupérer des travaux antérieurs, pour diverses raisons.\\
+
+\subsection{Wrapping Python}
+
+Le Wrapping Pyhton constitue à utiliser et transformer du code déjà existant dans un autre langage ( ici $ Feel++/C++$) en un module que l'on pourra alors importer et donc utiliser dans un environnement Python.
+
+\subsubsection{Boost Python}
+
+J'ai principalement étudié la librairie dédié à Boost-Python grâce au lien suivant :\\
+\newline
+\url{http://www.boost.org/doc/libs/1_55_0/libs/python/doc/tutorial/doc/html/index.
+html#python.quickstart}\\
+
+J'ai ensuite essayer quelques exemples présents dans ce document comme :
+
+\begin{lstlisting}[language=C++]
+ struct World
+ {
+ 	void set(std :: string msg) { this ->msg = msg; }
+ 	std :: string greet () { return msg; }
+ 	std :: string msg;
+ };
+
+# include <boost / python .hpp >
+using namespace boost :: python ;
+
+ BOOST_PYTHON_MODULE ( hello )
+ {
+	 class_ <World >(" World ")
+			 .def(" greet ", & World :: greet )
+ 		 	 .def("set ", & World :: set)
+	 ;
+}
+\end{lstlisting}
+
+On peut alors utiliser un fichier setup.py qui va créer le module hello.
+
+\begin{lstlisting}[language=python]
+#!/ usr/bin /env python
+
+from distutils . core import setup
+from distutils . extension import Extension
+
+setup ( name =" PackageName ",
+		ext_modules =[
+ 				Extension (" hello ", [" World .cpp "],
+ 				libraries = [" boost_python "])
+		  ])
+\end{lstlisting}
+
+Il reste alors à utiliser la commande suivante :
+
+\begin{lstlisting}
+mkdir build
+python setup .py build
+cd build /lib.linux -x86_64 -2.7/
+\end{lstlisting}
+
+On peut maintenant lancer python et utiliser le module comme suivant :
+
+\begin{lstlisting}
+>>> import hello
+>>> x= hello . World ()
+>>> x.set('The Geek')
+>>> x. greet ()
+'The Geek'
+\end{lstlisting}
+
+
+\subsubsection{SWIG}
+
+SWIG est une autre façon de wrapper du code en Python. Pour se faire, j'ai commencé la lecture du document suivant :\\
+\url{http://www.swig.org/Doc3.0/SWIGDocumentation.pdf} (début page 592) \\
+
+Je n'ai malheureusement pas encore eu le temps d'approfondir plus en détail SWIG
+
+\section{Travaux en cours}
+
+\subsection{I}
+-Début des tests de Wrapping Python à partir du CMakeList.txt et des commandes
+add\_library et target\_link\_libraries sur un des fichiers se trouvant dans feelpp/doc/manual/tutorial : myfunctionspace.cpp
+
+\subsection{II}
+-Suite de la documentation sur Boost Python et SWIG
+
+\section{Erreurs rencontrées}
+
+\subsection{I}
+-Problème avec l'utilisation du cmake pour la première création des Makefiles
+
+\subsection{II}
+-Tests non concluants de l'utilisation de Bjam et du fichier setup.py pour la création de modules sur des exemples plus poussés
+
+\subsection{III}
+-Premiers tests sur le wrapping par CMakeList non concluants
+
+
+
+\end{document}
