@@ -1,0 +1,265 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Pour cette deuxième semaine, après avoir continuer mes recherches sur le wrapping Python, j'ai  pût commencer mes tentatives de wrapper une application basique du repository Feelpp.
+
+\section{Création d'un dossier python, premiers commits et Pull Request}
+
+Afin de bien séparer mes travaux sur le wrapping Python, j'ai créer un nouveau dossier nommé python dans feelpp/doc/manual/ \\
+
+J'y ai ainsi déposer mes premières tentatives de wrapping sur le fichier myfunctionspace.cpp (accompagné de son fichier configuration myfunctionspace.cfg) issu du dossier feelpp/doc/manual/tutorial. \\
+
+Il a ensuite fallu ajouter tous ces fichiers au repository de Github.Pour se faire, il suffit d'utiliser les commandes suivantes : \\
+
+\begin{lstlisting}
+git add myfunctionspace.cpp
+git commit -m"first wrapping test" myfunctionspace.cpp
+git push
+\end{lstlisting}
+
+Ces commandes permettent respectivement de lier, puis d'annoncer un envoi accompagné d'un commentaire pour enfin l'envoyer sur la plateforme Github.\\
+Cependant, travaillant sur une copie réalisé à partir du Fork du repository de Feelpp, ceci ne sera réalisé que sur celle-ci. \\
+
+Il faut alors réalisé une demande de Pull Request .Pour cela, à partir de l'interface du site web, il suffit alors de comparer les deux versions et choisir d'envoyer les modifications au repository "maitre".
+
+\section{CMakeLists et premiers essais }
+
+Afin de pouvoir wrapper l'application contenue dans le fichier myfunctionspace.cpp avec Boost Python, il faut tout d'abord commencer par y ajouter une méthode, qui va définir et créer à l'exécution le module Python associé, et qui prendra la forme suivante.\\
+
+Code de l'application :
+\begin{lstlisting}
+#include <feel/feel.hpp>
+#include <string>
+using namespace Feel;
+
+#include<iostream>
+
+
+int test (int argc,char** argv)
+{
+
+    //Initialize Feel++ Environment
+    Environment env( _argc=argc, _argv=argv,
+                     _about=about( _name="myfunctionspace",
+                                   _author="Feel++ Consortium",
+                                   _email="feelpp-devel@feelpp.org" )  );
+
+    //! [mesh]
+    // create the mesh
+    auto mesh = loadMesh(_mesh=new Mesh<Simplex<2>>);
+    //! [mesh]
+
+    //! [space]
+    // function space \f$ X_h \f$ using order 2 Lagrange basis functions
+    auto Xh = Pch<2>( mesh );
+    //! [space]
+
+    //! [expression]
+    auto g = expr( soption(_name="functions.g"));
+    auto gradg = grad<2>(g);
+    //! [expression]
+
+    //! [interpolant]
+    // elements of \f$ u,w \in X_h \f$
+    auto u = Xh->element( "u" );
+    auto w = Xh->element( "w" );
+    // build the interpolant of u
+    u.on( _range=elements( mesh ), _expr=g );
+    // build the interpolant of the interpolation error
+    w.on( _range=elements( mesh ), _expr=idv( u )-g );
+
+    // compute L2 norms
+    double L2g = normL2( elements( mesh ), g );
+    double H1g = normL2( elements( mesh ), _expr=g,_grad_expr=gradg );
+    double L2uerror = normL2( elements( mesh ), ( idv( u )-g ) );
+    double H1uerror = normH1( elements( mesh ), _expr=( idv( u )-g ),
+                              _grad_expr=( gradv( u )-gradg ) );
+    std::cout << "||u-g||_0 = " << L2uerror/L2g << std::endl;
+    std::cout << "||u-g||_1 = " << H1uerror/H1g << std::endl;
+     //! [interpolant]
+
+    //! [export]
+    // export for post-processing
+    auto e = exporter( _mesh=mesh );
+    // save interpolant
+    e->add( "g", u );
+    // save interpolant of interpolation error
+    e->add( "u-g", w );
+
+    e->save();
+    //! [export]
+  
+}
+//! [all]
+\end{lstlisting}
+
+Ajout du BOOST\_PYTHON\_MODULE :
+
+\begin{lstlisting}
+#include <boost/python.hpp>
+using namespace boost::python;
+
+BOOST_PYTHON_MODULE(libFunct)
+{
+    def("test",test); 
+    def("wrap",wrap);
+    def("main",main);
+   
+}
+\end{lstlisting}
+
+Ceci permettra alors de créer une librairie nommé libFunct qui comprendra les méthodes définit dedans, et donc ici celle qui nous intéresse : test.\\
+Il faut encore cependant demander à construire cette librairie.Pour se faire, on utilisera alors un CMakeLists.txt qui sera d'ailleurs utile vu qu'on se trouve dans un nouveau dossier.
+On a alors :
+
+\begin{lstlisting}[language=make]
+include_directories(${Boost_INCLUDE_DIRS}) 
+add_executable(functspace myfunctionspace.cpp myfunctionspace.cfg)
+add_library(Funct SHARED myfunctionspace.cpp)
+target_link_libraries(Funct ${FEELPP_LIBRARIES})
+target_link_libraries(functspace Funct)
+target_link_libraries(functspace ${PYTHON_LIBRARIES} ${Boost_LIBRARIES})
+\end{lstlisting}
+
+Les 2 lignes suivantes sont celles permettant la création et l'utilisation la librairie voulue :\\
+-add\_library(Funct SHARED myfunctionspace.cpp) permet la création du module définit dans le fichier myfunctionspace.cpp\\
+-target\_link\_libraries(Funct \$\{FEELPP\_LIBRARIES\}) ajoutera,quand à elle,les librairies contenues dans Feelpp, ici Python et Boost qui nous sont utiles, à celle de Funct.\\
+
+Il suffit alors après un cmake de faire un make dans le dossier python de /data pour obtenir la librairie libFunct. Il ne reste plus qu'à l'utiliser ainsi :
+
+\begin{lstlisting}[language=Python]
+>>> import libFunct
+>>> libFunct.test(1,...)
+\end{lstlisting}
+
+On se retrouve alors face à un nouveau problème.En effet, pour appeller la méthode test, on a besoin d'un int ainsi que d'un char**, type qui n'est pas présent dans Python.\\
+On a alors besoin d'ajouter une nouvelle méthode, qui à partir d'un objet Python (ici boost::python::list) va récupérer ces objets et apeller la méthode test avec eux.
+
+\begin{lstlisting}
+void wrap( boost::python::list argv)
+{
+    int argc = boost::python::len(argv);
+    std::cout << argc << std::endl ;
+    // - Could be a one-liner call to extract<>():-
+    
+    char** pyarg =new char* [argc];
+    boost::python::stl_input_iterator<std::string> begin(argv), end;
+    int i=0;
+    while (begin != end)
+    {
+        std::cout << *begin << std::endl ;
+        pyarg[i] =strdup((*begin).c_str());
+        begin++;
+        i++;
+    }
+   // pyarg[i] =new char();
+   // *pyarg[i]='\0'; 
+               /// ----------
+    std::cout << pyarg[0] << std::endl;
+    test(argc,pyarg);
+
+    
+    for(int i=0;i<argc;i++)
+        delete pyarg[i];
+    delete[] pyarg;
+}
+\end{lstlisting}
+
+Cependant, cette méthode rencontre des problème liés à MPI lors de son exécution avec du code Feel++.En supprimant ce qui lui est lié, on obtient alors de résultats satisfaisant.\\
+Par exemple :
+\begin{lstlisting}
+int test (int argc,char** argv)
+{
+    std::cout << "It's working !!!!" << std::endl;
+    return 1;  
+}
+\end{lstlisting}
+
+\newpage
+Après exécution du script Python suivant :
+\begin{lstlisting}[language=Python]
+#!/usr/bin/python
+
+import libFunct
+import sys
+
+libFunct.wrap(sys.argv)
+\end{lstlisting}
+
+On obtient :
+\begin{verbatim}
+1
+./Test.py
+./Test.py
+It's working !!!!
+\end{verbatim}
+
+
+\section{Travaux en cours}
+-Mise en application et perfectionnement de la méthode wrap permettant la récupération et l'exécution du programme principal.\\
+
+-Inclusion de MPI (Open MPI) dans le code Python pour l'exécution du code Feel++.\\
+
+\section{Problèmes rencontrés en cours de semaine}
+-Création et modification du nouveau CMakeLists du dossier python.\\
+
+-Récupération des données nécessaires à l'exécution du programme principal.\\
+
+-Erreurs d'exécution MPI à partir de Python avec du code Feel++ .\\
+
+\end{document}
