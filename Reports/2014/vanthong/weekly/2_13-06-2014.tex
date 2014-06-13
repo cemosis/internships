@@ -1,0 +1,141 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=C++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Format de Fichier HDF5}
+J'ai débuté la semaine par lire la documentation sur le format de fichier HDF5 et en faisant les tutoriels proposés par le site officiel du \textbf{HDF Group}. 
+Par conséquent j'ai dû installer sur ma machine les librairies et et quelques outils de visualisation de fichiers HDF5 comme \emph{HDFview} pour explorer et analyser la structure d'un fichier.\newline
+Pour compiler sur ma machine, j'utilise les commandes \emph{h5cc} pour les fichiers \emph{.c} et \emph{h5++} pour les fichiers \emph{.cpp}.\newline 
+Pourtant sur irma, il est préférable d'utiliser un fichier \emph{CMakeLists.txt} pour la compilation :
+\begin{lstlisting}
+cmake_minimum_required(VERSION 2.8)
+find_package(HDF5 REQUIRED)
+if (HDF5_FOUND)
+    message (STATUS "HDF5 - Headers ${HDF5_INCLUDE_DIRS}")
+    message (STATUS "HDF5 - Libraries ${HDF5_LIBRARIES}")
+include_directories (${HDF5_INCLUDE_DIRS})
+    endif ()
+    find_package(MPI REQUIRED)
+if (MPI_FOUND)    
+    message (STATUS "MPI - Headers ${MPI_INCLUDE_DIRS}")
+    message (STATUS "MPI - Libraries ${MPI_LIBRARIES}")
+include_directories (${MPI_INCLUDE_PATH})
+endif ()
+
+add_executable (exemple exemple.c)
+target_link_libraries (exemple ${MPI_LIBRARIES} ${HDF5_LIBRARIES})
+\end{lstlisting}
+Un fichier HDF5 est composé de deux types d'objets :
+\begin{enumerate}
+\item \textbf{HDF5 group} : un groupe de structure contenant zéro ou plusieurs objet HDF5 et des métadonnées
+\item \textbf{HDF5 dataset} : un tableau de données multidimensionnel et des métadonnées
+\item \textbf{HDF5 attribut} : information qui décrit l'objet HDF5
+\end{enumerate}
+Une métadonnée est une donnée servant à définir ou décrire une autre donnée.
+\section {Manipulation GitHub}
+\begin{enumerate}
+\item création d'un dépôt pour les rapports hebdomadaires
+\item fusion du dépôt fork et le dépôt principal pour récupérer mon nouveau répertoire de travail (~/feelpp/applications/mesh/)
+\item premier commit éffectué 
+\end{enumerate}
+\section {Partitionnement d'un maillage}
+J'ai ajouté une option dans le \emph{~/feelpp/applications/mesh/mesh.cpp} pour réccupérer le nombre de partition voulu par l'utilisateur.
+\begin{lstlisting}
+int main( int argc, char** argv )
+{
+    po::options_description opts ( "Mesh basic information and partition");
+    opts.add_options()
+        ( "numPartition", po::value<int>()->default_value(1), "Number of partitions" );
+
+    // initialize Feel++ Environment
+    Environment env( _argc=argc, _argv=argv,
+            _desc=opts,
+            _about=about( _name="mesh" ,
+                _author="Feel++ Consortium",
+                _email="feelpp-devel@feelpp.org" ) );
+
+    // create a mesh with GMSH using Feel++ geometry tool
+    auto numPartition = ioption(_name="numPartition");
+    auto mesh = loadMesh(_mesh=new  Mesh<Simplex<FEELPP_DIM>>, _partitions=numPartition);
+
+    if ( Environment::isMasterRank() )
+    {
+        std::cout << " - mesh entities" << std::endl;
+        std::cout << "   number of elements : " << mesh->numGlobalElements() << std::endl;
+        std::cout << "      number of faces : " << mesh->numGlobalFaces() << std::endl;
+        if ( FEELPP_DIM > 2 )
+            std::cout << "      number of edges : " << mesh->numGlobalEdges() << std::endl;  
+        std::cout << "      number of points : " << mesh->numGlobalPoints() << std::endl;
+        std::cout << "    number of vertices : " << mesh->numGlobalVertices() << std::endl;
+        std::cout << " - mesh sizes" << std::endl;
+        std::cout << "                h max : " << mesh->hMax() << std::endl;
+        std::cout << "                h min : " << mesh->hMin() << std::endl;
+        std::cout << "                h avg : " << mesh->hAverage() << std::endl;
+        std::cout << "              measure : " << mesh->measure() << std::endl;
+
+        std::cout << "Number of Partitions : " << numPartition << std::endl ;
+    }
+
+
+    // export results for post processing
+    auto e = exporter( _mesh=mesh);
+    e->addRegions();
+    e->save();
+}   // main
+\end{lstlisting}
+Durant cette semaine, j'ai passé la plupart du temps à regarder et essayer de comprendre les classes dans le répertoire ~/feelpp/feel/feelfilters/ (loadmesh.hpp, gmsh.hpp, exporter.hpp, exporter.cpp, exporter\_impl.cpp...)
+\section {Travail à faire}
+\begin{enumerate}
+\item Continuer à faire les tutoriels sur HDF5
+\item Etudier comment paraview gère les données sous format HDF5
+\item Se Documenter sur XMDF
+\item Apprendre à utiliser \emph{screen} pour limiter le nombre de connexion \emph{ssh} 
+
+\end{enumerate}
+\end{document}
