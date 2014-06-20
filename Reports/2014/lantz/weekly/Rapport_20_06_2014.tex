@@ -1,0 +1,521 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Durant cette troisième semaine de stage, j'ai continué et achever le wrapping de l'application de base myfunctionspace, avant de pouvoir m'attaquer à un wrapping plus ardu ,celui de la classe Environment , utilisée dans l'intégralité des programmes Feel++.
+
+\section{Suite et premier résultat du wrapping de Myfunctionspace }
+
+La semaine dernière s'était achevée sur les premiers résultats du wrapping, en ayant supprimer toute trace de code appartenant à la librairie Feelpp. Pour rappel, on avait alors la méthode wrap qui appelait la méthode test, contenant le code voulu, à partir d'une liste Python.
+ 
+ Le BOOST\_PYTHON\_MODULE s'écrivait alors :
+ 
+\begin{lstlisting}
+#include <boost/python.hpp>
+using namespace boost::python;
+
+BOOST_PYTHON_MODULE(libFunct)
+{
+    def("test",test); 
+    def("wrap",wrap);
+    def("main",main);
+   
+}
+\end{lstlisting}
+
+et par l'exécution du script Python suivant :
+
+\begin{lstlisting}[language=Python]
+#!/usr/bin/python
+
+import libFunct
+import sys
+
+libFunct.wrap(sys.argv)
+\end{lstlisting}
+
+On obtenait  :
+\begin{verbatim}
+1
+./Test.py
+./Test.py
+It's working !!!!
+\end{verbatim}
+
+On veut maintenant faire la même chose mais avec le code Feel++ de myfunctionspace.
+Pour se faire, il nous faut intégrer et initialiser MPI dans le module Python ainsi que dans le script Python.\\
+
+On utilisera pour se faire la librairie mpi4py qui permet d'initialiser et donc d'utiliser MPI en Python.\\
+
+Ainsi la définition du module devient :
+\begin{lstlisting}
+#include <mpi4py/mpi4py.h>
+#include <boost/python.hpp>
+using namespace boost::python;
+
+// build the module, named libFunct, from previous methods
+BOOST_PYTHON_MODULE(libFunct)
+{
+    if (import_mpi4py() <0) return ;
+    def("test",test); 
+    def("wrap",wrap);
+    def("main",main);
+   
+}
+\end{lstlisting}
+
+Les méthodes test et wrap deviennent  :
+\begin{lstlisting}
+#include <feel/feel.hpp>
+#include <string>
+using namespace Feel;
+#include <mpi.h>
+#include <iostream>
+
+
+int test (int argc,char** argv)
+{
+    for(int i=0;i<argc;i++)
+         std::cout << argv[i] << std::endl;
+    //Initialize Feel++ Environment
+    Environment env( _argc=argc, _argv=argv,
+                     _about=about( _name="myfunctionspace",
+                                   _author="Feel++ Consortium",
+                                   _email="feelpp-devel@feelpp.org" )  );
+    
+    //! [mesh]
+    // create the mesh
+    auto mesh = loadMesh(_mesh=new Mesh<Simplex<2>>);
+    //! [mesh]
+
+    //! [space]
+    // function space \f$ X_h \f$ using order 2 Lagrange basis functions
+    auto Xh = Pch<2>( mesh );
+    //! [space]
+
+    //! [expression]
+    auto g = expr( soption(_name="functions.g"));
+    auto gradg = grad<2>(g);
+    //! [expression]
+
+    //! [interpolant]
+    // elements of \f$ u,w \in X_h \f$
+    auto u = Xh->element( "u" );
+    auto w = Xh->element( "w" );
+    // build the interpolant of u
+    u.on( _range=elements( mesh ), _expr=g );
+    // build the interpolant of the interpolation error
+    w.on( _range=elements( mesh ), _expr=idv( u )-g );
+
+    // compute L2 norms
+    double L2g = normL2( elements( mesh ), g );
+    double H1g = normL2( elements( mesh ), _expr=g,_grad_expr=gradg );
+    double L2uerror = normL2( elements( mesh ), ( idv( u )-g ) );
+    double H1uerror = normH1( elements( mesh ), _expr=( idv( u )-g ),
+                              _grad_expr=( gradv( u )-gradg ) );
+    std::cout << "||u-g||_0 = " << L2uerror/L2g << std::endl;
+    std::cout << "||u-g||_1 = " << H1uerror/H1g << std::endl;
+     //! [interpolant]
+
+    //! [export]
+    // export for post-processing
+    auto e = exporter( _mesh=mesh );
+    // save interpolant
+    e->add( "g", u );
+    // save interpolant of interpolation error
+    e->add( "u-g", w );
+
+    e->save();
+    //! [export]
+
+            return 1;  
+}
+//! [all]
+\end{lstlisting}
+\begin{lstlisting}
+#include <boost/python.hpp>
+#include <boost/python/stl_iterator.hpp>
+#include <mpi4py/mpi4py.h>
+
+// build an arguments recuperator from a Python object list to call the test method
+void wrap( boost::python::list argv)
+{
+    int argc = boost::python::len(argv);
+    std::cout << argc << std::endl ;
+        
+    char** pyarg =new char* [argc+1];
+    boost::python::stl_input_iterator<std::string> begin(argv), end;
+    int i=0;
+    while (begin != end)
+    {
+        std::cout << *begin << std::endl ;
+        pyarg[i] =strdup((*begin).c_str());
+        begin++;
+        i++;
+    }
+    pyarg[argc]=NULL;
+    test(argc,pyarg);
+    std::cout << "It's working !!!!" << std::endl; 
+    for(int i=0;i<argc;i++)
+        delete pyarg[i];
+    delete[] pyarg;
+}
+\end{lstlisting}
+et enfin le script Python :
+
+\begin{lstlisting}
+#!/usr/bin/python
+
+from mpi4py import MPI
+import libFunct
+import sys
+
+ libFunct.wrap(sys.argv)
+\end{lstlisting}
+
+On obtient finalement à l'exécution :
+
+\begin{verbatim}
+./Test.py
+
+1
+./Test.py
+./Test.py
+||u-g||_0 = -nan
+||u-g||_1 = -nan
+It's working !!!!
+\end{verbatim}
+
+La fonction g étant défini de base dans le fichier de configuration, myfunctionspace.cfg, si l'on ne lui donne pas une valeur, on obtient des résultats comme ci-dessus.\\
+On peut alors utiliser l'option functions.g contenu dans le code Feel++ de base pour lui donner une valeur. On obtient alors :
+
+\begin{verbatim}
+./Test.py --functions.g="sin(pi*x)*cos(pi*y):x:y"
+
+2
+./Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+./Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+It's working !!!!
+\end{verbatim}
+
+On peut alors comparer avec l'exécutable functspace créé à partir du code de base :
+
+\begin{verbatim}
+/functspace --functions.g="sin(pi*x)*cos(pi*y):x:y"
+
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+\end{verbatim}
+
+On obtient finalement les mêmes résultats.
+
+De même, on peut lancer l'exécution du script Python en parallèle avec la commande mpirun pour obtenir :
+
+\begin{verbatim}
+ mpirun -np 4 python Test.py --functions.g="sin(pi*x)*cos(pi*y):x:y"
+
+2
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+2
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+2
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+2
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+Test.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+||u-g||_0 = 0.000400902
+||u-g||_1 = 0.0132609
+It's working !!!!
+It's working !!!!
+It's working !!!!
+It's working !!!!
+\end{verbatim}
+
+\section{Classe Environment}
+
+On aimerait s'attaquer maintenant aux wrapping des différentes classes et méthodes de Feel++ afin de pouvoir lancer par exemple chaque ligne de myfunctionspace séparément en Python.\\
+
+Pour débuter cela, on va commencer par s'attaquer à la classe présente dans chaque fichier : la classe Environment, utilisé comme suivant :
+
+\begin{lstlisting}
+Environment env( _argc=argc, _argv=argv,
+                     _about=about( _name="myfunctionspace",
+                                   _author="Feel++ Consortium",
+                                   _email="feelpp-devel@feelpp.org" )  );
+
+\end{lstlisting}
+
+On travaillera alors dans les fichiers environment.cpp et environment.hpp de ~/feelpp/feel/feelcore/ et dans un premeir temps, plus précisement à la partie suivante : \\
+\\
+environment.hpp
+\begin{lstlisting}
+class Environment : public detail::Environment
+{
+public:
+    BOOST_PARAMETER_CONSTRUCTOR(
+        Environment, (detail::Environment), tag,
+        (required
+         (argc,*)
+         (argv,*))
+        (optional
+         (desc,*)
+         (desc_lib,*)
+         (about,*)
+         (directory,( std::string ))
+            )) // no semicolon
+     
+      
+};
+\end{lstlisting}
+
+environment.cpp
+\begin{lstlisting}
+Environment::Environment( int& argc, char**& argv )
+    :
+    M_env( argc, argv, false )
+{
+    S_scratchdir = scratchdir()/fs::path(argv[0]).filename();
+    if ( !fs::exists( S_scratchdir ) )
+        fs::create_directories( S_scratchdir );
+    FLAGS_log_dir=S_scratchdir.string();
+
+    google::AllowCommandLineReparsing();
+    google::ParseCommandLineFlags(&argc, &argv, false);
+
+    // Initialize Google's logging library.
+    if ( !google::glog_internal_namespace_::IsGoogleLoggingInitialized() )
+    {
+        if ( argc > 0 )
+            google::InitGoogleLogging(argv[0]);
+        else
+            google::InitGoogleLogging("feel++");
+    }
+    google::InstallFailureSignalHandler();
+
+#if defined( FEELPP_HAS_TBB )
+    int n = tbb::task_scheduler_init::default_num_threads();
+    //int n = 2;
+    //VLOG(2) << "[Feel++] TBB running with " << n << " threads\n";
+    //tbb::task_scheduler_init init(2);
+#endif
+
+    S_worldcomm = worldcomm_type::New();
+    CHECK( S_worldcomm ) << "Feel++ Environment: creang worldcomm failed!";
+    S_worldcommSeq.reset( new WorldComm(S_worldcomm->subWorldCommSeq()) );
+
+#if defined ( FEELPP_HAS_PETSC_H )
+    PetscTruth is_petsc_initialized;
+    PetscInitialized( &is_petsc_initialized );
+
+    if ( !is_petsc_initialized )
+    {
+        i_initialized = true;
+#if defined( FEELPP_HAS_SLEPC )
+        int ierr = SlepcInitialize( &argc,&argv, PETSC_NULL, PETSC_NULL );
+#else
+        int ierr = PetscInitialize( &argc, &argv, PETSC_NULL, PETSC_NULL );
+#endif
+        boost::ignore_unused_variable_warning( ierr );
+        CHKERRABORT( *S_worldcomm,ierr );
+    }
+
+    // make sure that petsc do not catch signals and hence do not print long
+    //and often unuseful messages
+    PetscPopSignalHandler();
+#endif // FEELPP_HAS_PETSC_H
+
+}
+\end{lstlisting}
+
+On va rencontrer le même problème que lors du wrapping de myfunctionspace avec la récupération des arguments. On tente alors d'écrire un constructeur qui prend une boost::python::list en argument :
+
+\begin{lstlisting}
+Environment::Environment(boost::python::list arg)
+    {
+    int argc = boost::python::len(arg);
+    std::cout << argc << std::endl ;
+        
+    char** argv =new char* [argc+1];
+    boost::python::stl_input_iterator<std::string> begin(arg), end;
+    int i=0;
+    while (begin != end)
+    {
+        std::cout << *begin << std::endl ;
+        argv[i] =strdup((*begin).c_str());
+        begin++;
+        i++;
+    }
+    argv[argc]=NULL;
+    
+    S_scratchdir = scratchdir()/fs::path(argv[0]).filename();
+    if ( !fs::exists( S_scratchdir ) )
+        fs::create_directories( S_scratchdir );
+    FLAGS_log_dir=S_scratchdir.string();
+
+    google::AllowCommandLineReparsing();
+    google::ParseCommandLineFlags(&argc, &argv, false);
+
+    // Initialize Google's logging library.
+    if ( !google::glog_internal_namespace_::IsGoogleLoggingInitialized() )
+    {
+        if ( argc > 0 )
+            google::InitGoogleLogging(argv[0]);
+        else
+            google::InitGoogleLogging("feel++");
+    }
+    google::InstallFailureSignalHandler();
+
+#if defined( FEELPP_HAS_TBB )
+    int n = tbb::task_scheduler_init::default_num_threads();
+    //int n = 2;
+    //VLOG(2) << "[Feel++] TBB running with " << n << " threads\n";
+    //tbb::task_scheduler_init init(2);
+#endif
+
+    S_worldcomm = worldcomm_type::New();
+    CHECK( S_worldcomm ) << "Feel++ Environment: creang worldcomm failed!";
+    S_worldcommSeq.reset( new WorldComm(S_worldcomm->subWorldCommSeq()) );
+
+    #if defined ( FEELPP_HAS_PETSC_H )
+    PetscTruth is_petsc_initialized;
+    PetscInitialized( &is_petsc_initialized );
+
+    if ( !is_petsc_initialized )
+    {
+        i_initialized = true;
+#if defined( FEELPP_HAS_SLEPC )
+        int ierr = SlepcInitialize( &argc,&argv, PETSC_NULL, PETSC_NULL );
+#else
+        int ierr = PetscInitialize( &argc, &argv, PETSC_NULL, PETSC_NULL );
+#endif
+        boost::ignore_unused_variable_warning( ierr );
+        CHKERRABORT( *S_worldcomm,ierr );
+    }
+
+    // make sure that petsc do not catch signals and hence do not print long
+    //and often unuseful messages
+    PetscPopSignalHandler();
+#endif // FEELPP_HAS_PETSC_H
+     
+
+   // Environment::Environment(argc,argv);
+        for(int i=0;i<argc;i++)
+        delete argv[i];
+    delete [] argv ;    
+}
+\end{lstlisting}
+
+On construit alors le module dans lib.cpp comme suivant :
+
+\begin{lstlisting}
+#include "environment.hpp"
+#include <boost/python.hpp>
+#include <boost/python/stl_iterator.hpp>
+#include <mpi4py/mpi4py.h>
+
+
+
+
+#include <boost/python.hpp>
+using namespace boost::python;
+
+// build the module, named libFunct, from previous methods
+BOOST_PYTHON_MODULE(libEnvironment)
+{
+    if (import_mpi4py() <0) return ;
+  class_<Feel::Environment,boost::noncopyable, bases<Feel::detail::Environment> > ("Environment",init<list>())
+        ;
+       
+     
+}
+\end{lstlisting}
+
+Cependant, pour l'instant, la création de ce module n'est pas encore fonctionnel.
+
+
+\section{Travaux en cours}
+- Suite du travail de wrapping sur la classe Environment.
+
+- Recherche et documentation pour la correction des erreurs rencontrées sur ce problème.
+
+\section{Problèmes rencontrés en cours de semaine}
+- Exécution du module libFunct de myfunctionspace en parallèle .
+
+- Erreurs de compilation pour la création du module Python de Environment .
+
+\end{document}
