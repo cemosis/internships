@@ -1,0 +1,380 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Pour cette quatrième semaine de stage, j'ai tenté par différentes manières, que je décrirais plus en détail après, de rendre fonctionnel le wrapping de la classe Environment, entamé la semaine dernière. 
+
+
+\section{Test autour de la récupération d'un argument char** }
+
+Afin de wrapper la classe Environment et l'appeler dans un environnement Python, on peut décider à l'inverse de la semaine dernière, de ne pas utiliser une nouveau constructeur prenant une $boost::python::list$ en paramètre, mais de prendre la constructeur déjà implémenté prenant un int et un char**.
+
+Pour se faire, on peut écrire:
+
+\begin{lstlisting}
+#include "environment.hpp"
+
+#include <boost/python.hpp>
+#include <boost/python/stl_iterator.hpp>
+#include <mpi4py/mpi4py.h>
+
+#include <boost/parameter/keyword.hpp>
+#include <boost/parameter/preprocessor.hpp>
+#include <boost/parameter/python.hpp>
+#include <boost/python/ptr.hpp>
+
+using namespace boost::python;
+namespace py = boost::parameter::python;
+namespace mpl = boost::mpl;
+
+// build the module, named libFunct, from previous methods
+BOOST_PYTHON_MODULE(libEnvironment)
+{
+    if (import_mpi4py() <0) return ;
+   class_<Feel::detail::Environment,boost::noncopyable> ("Environment", init<int&, char**&>());
+}
+\end{lstlisting}
+
+On se retrouve alors avec le même problème que précédemment, c'est à dire la récupération de l'argument char** en python pour appeler le constructeur wrappé.
+\newline
+Voici quelque unes des techniques employées afin d'essayer de récupérer cet objet :
+
+\subsection{Création de méthodes récupérant les arguments à partir d'une liste python}
+
+\begin{lstlisting}
+int recupArgc(boost::python::list arg)
+   {
+   return boost::python::len(arg);
+   }
+
+   char** recupArgv(boost::python::list arg)
+   {
+   int argc=boost::python::len(arg);
+   char** argv =new char* [argc+1];
+   boost::python::stl_input_iterator<std::string> begin(arg), end;
+   int i=0;
+   while (begin != end)
+   {
+   std::cout << *begin << std::endl ;
+   argv[i] =strdup((*begin).c_str());
+   begin++;
+   i++;
+   }
+   argv[argc]=NULL;
+   return argv;
+   }
+\end{lstlisting}
+
+\subsection{Création d'une classe récupérant les arguments à partir d'une liste python}
+
+\begin{lstlisting}
+class Argv {
+    public :
+        char** argv;
+
+        Argv(boost::python::list arg)
+        {
+            int argc=boost::python::len(arg);
+            argv =new char* [argc+1];
+            boost::python::stl_input_iterator<std::string> begin(arg), end;
+            int i=0;
+            while (begin != end)
+            {
+                std::cout << *begin << std::endl ;
+                argv[i] =strdup((*begin).c_str());
+                begin++;
+                i++;
+            }
+            argv[argc]=NULL;
+        }
+
+        char** getArgv () 
+        {
+            return boost::python::ptr(argv);
+        }
+};
+\end{lstlisting}
+
+Ici il y a différentes manières d'écrire le BOOST\_PYTHON\_MODULE donnant des erreurs différentes.
+
+\begin{lstlisting}
+class_<Argv>("Argv",init<boost::python::list>())
+     //.def("get",&Argv::getArgv,return_value_policy<manage_new_object>());
+        .def_readonly("argv",&Argv::argv);
+    /*.add_property("argv",
+       make_getter(&Argv::argv,return_value_policy<manage_new_object>()),
+       make_setter(&Argv::argv,return_value_policy<manage_new_object>()));
+    */  
+\end{lstlisting}
+
+L'ensemble des méthodes présentées précédemment pose alors des problèmes divers à la compilation. Seul l'utilisation de la classe Argv définit comme ci-dessus compile, mais lance une erreur liée au char**  à l'exécution.
+\newline
+Script Python :
+\begin{lstlisting}
+#!/usr/bin/python
+
+from mpi4py import MPI
+import libEnvironment
+from _argv import *
+import sys
+
+x=libEnvironment.Argv(sys.argv);
+libEnvironment.Environment(len(sys.argv),x.argv)
+\end{lstlisting}
+
+Résultat à l'exécution:
+\begin{lstlisting}
+Traceback (most recent call last):
+  File "./EnvTest.py", line 9, in <module>
+    libEnvironment.Environment(len(sys.argv),x.argv)
+TypeError: No to_python (by-value) converter found for C++ type: char**
+*** Error in `/usr/bin/python': free(): invalid pointer: 0x00000000018495c8 ***
+[irma-atlas:31120] *** Process received signal ***
+[irma-atlas:31120] Signal: Aborted (6)
+[irma-atlas:31120] Signal code:  (-6)
+[irma-atlas:31120] [ 0] /lib/x86_64-linux-gnu/libpthread.so.0(+0xf8f0) [0x7fa17d1bf8f0]
+[irma-atlas:31120] [ 1] /lib/x86_64-linux-gnu/libc.so.6(gsignal+0x37) [0x7fa17c505407]
+[irma-atlas:31120] [ 2] /lib/x86_64-linux-gnu/libc.so.6(abort+0x148) [0x7fa17c508508]
+[irma-atlas:31120] [ 3] /lib/x86_64-linux-gnu/libc.so.6(+0x6ee44) [0x7fa17c53ee44]
+[irma-atlas:31120] [ 4] /lib/x86_64-linux-gnu/libc.so.6(+0x78b8e) [0x7fa17c548b8e]
+[irma-atlas:31120] [ 5] /lib/x86_64-linux-gnu/libc.so.6(+0x79896) [0x7fa17c549896]
+[irma-atlas:31120] [ 6] /usr/lib/x86_64-linux-gnu/libstdc++.so.6(_ZNSsD1Ev+0x1f) [0x7fa1669c9a4f]
+[irma-atlas:31120] [ 7] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZN5boost10filesystem4pathD2Ev+0x15) [0x7fa176e2cca5]
+[irma-atlas:31120] [ 8] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZSt8_DestroyIN5boost10filesystem4pathEEvPT_+0x15) [0x7fa176e30775]
+[irma-atlas:31120] [ 9] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZNSt12_Destroy_auxILb0EE9__destroyIPN5boost10filesystem4pathEEEvT_S6_+0x2f) [0x7fa176e3073f]
+[irma-atlas:31120] [10] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZSt8_DestroyIPN5boost10filesystem4pathEEvT_S4_+0x1d) [0x7fa176e306fd]
+[irma-atlas:31120] [11] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZSt8_DestroyIPN5boost10filesystem4pathES2_EvT_S4_RSaIT0_E+0x21) [0x7fa176e4fa51]
+[irma-atlas:31120] [12] /data/lantz/build/doc/manual/python/Class/libEnvironment.so(_ZNSt6vectorIN5boost10filesystem4pathESaIS2_EED2Ev+0x37) [0x7fa176e2f187]
+[irma-atlas:31120] [13] /lib/x86_64-linux-gnu/libc.so.6(+0x39be9) [0x7fa17c509be9]
+[irma-atlas:31120] [14] /lib/x86_64-linux-gnu/libc.so.6(+0x39c35) [0x7fa17c509c35]
+[irma-atlas:31120] [15] /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0xfc) [0x7fa17c4f1b4c]
+[irma-atlas:31120] [16] /usr/bin/python() [0x56e67e]
+[irma-atlas:31120] *** End of error message ***
+Aborted
+\end{lstlisting}
+
+\subsection{Création de méthodes récupérant les arguments à partir d'une liste python}
+
+\begin{lstlisting}
+std::auto_ptr<Feel::detail::Environment> class_arg(boost::python::list arg)
+{
+    int argc=boost::python::len(arg);
+    char** argv =new char* [argc+1];
+    boost::python::stl_input_iterator<std::string> begin(arg), end;
+    int i=0;
+    while (begin != end)
+    {
+        std::cout << *begin << std::endl ;
+        argv[i] =strdup((*begin).c_str());
+        begin++;
+        i++;
+    }
+    argv[argc]=NULL;
+
+    std::auto_ptr<Feel::detail::Environment> Env(new Feel::detail::Environment(argc,argv));
+
+    for(int i=0;i<argc;i++)
+        delete argv[i];
+    delete argv;    
+    
+    return Env;
+}
+\end{lstlisting}
+
+\begin{lstlisting}
+BOOST_PYTHON_MODULE(libEnvironment)
+{
+    if (import_mpi4py() <0) return ;
+    class_<Feel::detail::Environment,boost::noncopyable> ("Environment", init<int&, char**&>())
+       .def("__init__", make_constructor(class_arg)) 
+        ;
+}
+\end{lstlisting}
+
+Ici on retrouve une nouvelle erreur à l'exécution :
+\newline
+
+Script Python :
+\begin{lstlisting}
+#!/usr/bin/python
+
+from mpi4py import MPI
+import libEnvironment
+import sys
+
+x=libEnvironment.Environment(sys.argv)
+\end{lstlisting}
+
+Résultat à l'exécution:
+\begin{lstlisting}
+*** Error in `/usr/bin/python': free(): invalid pointer: 0x0000000002839588 ***
+*** Aborted at 1403878055 (unix time) try "date -d @1403878055" if you are using GNU date ***
+PC: @     0x7f9d0ffad407 (unknown)
+*** SIGABRT (@0x5ed00008c91) received by PID 35985 (TID 0x7f9d1109c700) from PID 35985; stack trace: ***
+    @     0x7f9d10c678f0 (unknown)
+    @     0x7f9d0ffad407 (unknown)
+    @     0x7f9d0ffb0508 (unknown)
+    @     0x7f9d0ffe6e44 (unknown)
+    @     0x7f9d0fff0b8e (unknown)
+    @     0x7f9d0fff1896 (unknown)
+    @     0x7f9cfa471a4f (unknown)
+    @     0x7f9d0a8d9525 boost::filesystem::path::~path()
+    @     0x7f9d0a8dcff5 std::_Destroy<>()
+    @     0x7f9d0a8dcfbf std::_Destroy_aux<>::__destroy<>()
+    @     0x7f9d0a8dcf7d std::_Destroy<>()
+    @     0x7f9d0a8fc2d1 std::_Destroy<>()
+    @     0x7f9d0a8dba07 std::vector<>::~vector()
+    @     0x7f9d0ffb1be9 (unknown)
+    @     0x7f9d0ffb1c35 (unknown)
+    @     0x7f9d0ff99b4c (unknown)
+    @           0x56e67e (unknown)
+Aborted
+\end{lstlisting}
+
+
+\subsection{Utilisation des pointer\_wrapper de Boost Python}
+
+\begin{lstlisting}
+class Argv {
+    public :
+        char** argv;
+
+        Argv(boost::python::list arg)
+        {
+            int argc=boost::python::len(arg);
+            argv =new char* [argc+1];
+            boost::python::stl_input_iterator<std::string> begin(arg), end;
+            int i=0;
+            while (begin != end)
+            {
+                std::cout << *begin << std::endl ;
+                argv[i] =strdup((*begin).c_str());
+                begin++;
+                i++;
+            }
+            argv[argc]=NULL;
+        }
+
+        boost::python::pointer_wrapper<char**> getArgv () 
+        {
+            return boost::python::ptr(argv);
+        }
+};
+\end{lstlisting}
+
+
+\section{Wrapping du BOOST\_PARAMETER\_CONSTRUCTOR}
+
+Notre but est de pouvoir wrapper le constructeur présent dans $Feel::Environment$, héritant de $Feel::detail::Environment$, codé de la façon suivante :
+
+\begin{lstlisting}
+class Environment : public detail::Environment
+    {
+        public:
+            BOOST_PARAMETER_CONSTRUCTOR(
+                    Environment, (detail::Environment), tag,
+                    (required
+                     (argc,*)
+                     (argv,*))
+                    (optional
+                     (desc,*)
+                     (desc_lib,*)
+                     (about,*)
+                     (directory,( std::string ))
+                    )) // no semicolon
+
+
+    };
+\end{lstlisting}
+
+A partir de la documentation donnée dans le lien suivant, on peut alors écrire un BOOST\_PYTHON\_MODULE comme suivant :
+
+\begin{lstlisting}
+BOOST_PYTHON_MODULE(libEnvironment)
+{
+    if (import_mpi4py() <0) return ;
+    
+       class_<Feel::Environment,boost::noncopyable, bases<Feel::detail::Environment> > ("Environment",no_init)
+       .def(py::init<mpl::vector<Feel::tag::argc(int)
+       ,Feel::tag::argv(char**)
+       ,Feel::tag::desc*(Feel::po::options_description const&)
+       ,Feel::tag::desc_lib*(Feel::po::options_description const&)
+       ,Feel::tag::about*(Feel::AboutData const&)
+       ,Feel::tag::directory*(std::string)
+       >
+       >()
+       );  
+}
+\end{lstlisting}
+
+Lien:
+\url{http://www.boost.org/doc/libs/1_55_0/libs/parameter/doc/html/python.html#class-template-init}
+
+Malheureusement, à nouveau, il nous manque la possibilité  de récupérer la variable char** afin de pouvoir appeler cette méthode dans un environnement Python.
+
+\section{Travaux en cours}
+- Suite du travail sur la récupération possible d'un char** en Python
+
+- Recherche et documentation pour la correction des erreurs rencontrées sur ce problème.
+
+\section{Problèmes rencontrés en cours de semaine}
+- Récupération de l'argument char**.
+
+- Erreurs de compilation pour la création du module Python de Environment .
+
+\end{document}
+	
