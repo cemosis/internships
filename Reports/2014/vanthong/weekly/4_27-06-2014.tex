@@ -1,0 +1,177 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=C++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Exportation d'un maillage au format HDF5}
+Dans le dossier \textbf{/feelpp/doc/manual/hdf5} se trouve des fichiers \emph{.cpp} qui contiennent une fonction "main" permettant de faire des tests concernant les fichiers headers "partitionio.hpp" et "exporterhdf5.cpp".
+J'ai débuter cette semaine par étudier le fonctionnement des méthodes de la classe \emph{PartitionIO} utilisée pour exporter et importer des maillages depuis un fichier au format \textbf{hdf5}. J'ai remarqué que cette classe est capable de gérer un ou plusieurs partitions et aussi de gérer si les données d'un fichier est tranposées ou non.
+En compilant après quelques débuggage, on remarque que certaines fonctions d'extraction d'informations du maillage ne sont pas implémentées. 
+En conséquence j'ai décidé d'implémenter une nouvelle classe "Exporterhdf5" en m'inspirant fortement de la classe PartitionIO, sans prendre en compte les partitions pour l'instant. De plus, j'utilise les itérateurs fournis par la classe "Mesh" pour récupérer les informations du maillage à stocker. \newline 
+
+Voici son implémentation :
+\begin{lstlisting}
+template <typename MeshType>
+class Exporterhdf5
+{
+    public: 
+        typedef MeshType mesh_type ;
+        typedef typename mesh_type::value_type value_type ;
+        typedef boost::shared_ptr<mesh_type> mesh_ptrtype ;
+
+        Exporterhdf5 () {} 
+
+        Exporterhdf5 (const std::string& fileName,
+                const WorldComm& comm) ;
+
+        virtual ~Exporterhdf5 () {}   
+
+        void write (const mesh_ptrtype& mesh) ;
+
+        void read (mesh_ptrtype& mesh) ;
+
+    private :
+        void writePoints () ;
+
+        WorldComm M_comm ;
+        std::string M_fileName ;
+        HDF5 M_HDF5 ;
+        mesh_ptrtype M_meshOut ;
+        mesh_ptrtype M_meshIn ;
+        std::vector<size_type> M_uintBuffer ;
+        std::vector<value_type> M_realBuffer ;
+};
+\end{lstlisting}
+Le constructeur ne fait qu'initialiser quelques variables membres :
+\begin{lstlisting}
+template<typename MeshType>
+inline Exporterhdf5<MeshType>::Exporterhdf5 (const std::string& fileName, const WorldComm& comm) :
+    M_comm (comm),
+    M_fileName (fileName)
+{
+
+}
+\end{lstlisting}
+Pour écrire dans un fichier, il suffit d'appeler la méthode \emph{write} définie ainsi :
+\begin{lstlisting}
+template <typename MeshType>
+void Exporterhdf5<MeshType>::write (const mesh_ptrtype& mesh)
+{
+    M_meshOut = mesh ;
+    M_HDF5.openFile (M_fileName, M_comm, false) ;
+    writePoints () ;
+    M_HDF5.closeFile () ;
+
+    M_meshOut.reset () ;
+}
+\end{lstlisting}
+Cette méthode ouvre un fichier, et ensuite fait appel aux différentes méthodes d'écritures (writePoints, writeFaces...). \newline
+Voici la méthode qui permet d'écrire les identifiants et les coordonnées des points du maillage :
+\begin{lstlisting}
+template <typename MeshType>
+void Exporterhdf5<MeshType>::writePoints () 
+{
+    auto pt_it = M_meshOut->beginPointWithProcessId () ;
+    auto const pt_en = M_meshOut->endPointWithProcessId () ;
+    size_type maxNumPoints= std::distance (pt_it, pt_en) ;
+
+    //Tableau stockant la taille des tableaux
+    hsize_t currentSpaceDims [2] ;
+    hsize_t currentCount [2] ;
+
+    currentSpaceDims[0] = 1;
+    currentSpaceDims[1] = maxNumPoints ;
+
+    currentCount[0] = 3 ;
+    currentCount[1] = maxNumPoints ;
+
+    //creation des deux tables
+    M_HDF5.createTable ("point_coords", H5T_IEEE_F64BE, currentCount) ;
+    M_HDF5.createTable ("point_ids", H5T_STD_U32BE, currentSpaceDims) ;
+
+    M_uintBuffer.resize (currentSpaceDims[0]*currentSpaceDims[1], 0) ;
+    M_realBuffer.resize (currentCount[0]*currentCount[1], 0) ;
+
+    for (size_type i = 0 ; i < maxNumPoints ; i++ , pt_it++) 
+    {
+        M_uintBuffer[i] = pt_it->id () ;
+
+        M_realBuffer[i] = pt_it->node()[0] ;
+        if (mesh_type::nRealDim >= 2)
+            M_realBuffer[maxNumPoints + i] = pt_it->node()[1] ;
+        if (mesh_type::nRealDim >= 3)
+            M_realBuffer[2*maxNumPoints + i] = pt_it->node()[2] ;
+    }
+    
+    hsize_t currentOffset[2] = {0, 0} ;
+
+    //ecriture des donnees
+    M_HDF5.write ("point_coords", H5T_NATIVE_DOUBLE, currentCount, currentOffset, &M_realBuffer[0]) ;
+    currentOffset[0] = 0 ;
+    currentOffset[1] = 0 ;
+    M_HDF5.write ("point_ids", H5T_NATIVE_LLONG, currentSpaceDims, currentOffset , &M_uintBuffer[0]) ;
+
+    M_HDF5.closeTable("point_coords") ;
+    M_HDF5.closeTable("point_ids") ;
+}
+\end{lstlisting}
+Les données sont stockées de manière contigue pour optimiser le temps de parcours et pour aussi faciliter l'accès à ces données depuis un fichier XDMF par exemple.\newline
+
+\noindent
+Pour l'écriture des identifiants dans le tableau, il est nécessaire d'utiliser des \textbf{H5T\_NATIVE\_LLONG} si l'on utilise le type \textbf{size\_type} pour le buffer car la taille de size\_type est de 8 octets.\newline
+
+\noindent
+Je n'ai pu faire que l'exportation des points pour l'instant, parce que je n'ai pas encore réussi à trouver encore comment on récupère les données des faces (identifiant, faces marquées, faces adjacentes...). 
+
+Et voici comment on utilise cette classe dans le fichier \emph {Exporterhdf5.cpp} :
+\begin{lstlisting}
+auto mesh = loadMesh(_mesh=new Mesh<Simplex<2>>);
+Exporterhdf5 <Mesh<Simplex<2>>> expo ("ben1.h5", Environment::worldComm ()) ;
+expo.write (mesh) ;
+\end{lstlisting}
+\end{document}
