@@ -1,0 +1,616 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Durant cette sixième semaine en stage,j'ai concentré mes efforts sur les 2 méthodes principales restantes à savoir loadMesh et exporter afin de pouvoir finaliser la construction du script reprenant mymesh.cpp.
+
+
+\section{Wrapping de la méthode loadMesh}
+
+Retour sur la méthode loadMesh qui permet de charger le maillage donné en argument. Pour se faire,on voudrait wrapper la BOOST\_PARAMETER\_FUNCTION suivante :
+
+
+\begin{lstlisting}
+BOOST_PARAMETER_FUNCTION(
+    ( typename Feel::detail::mesh<Args>::ptrtype ), // return type
+    loadMesh,    // 2. function name
+
+    tag,           // 3. namespace of tag types
+
+    ( required
+      ( mesh, *)
+
+        ) // 4. one required parameter, and
+
+    ( optional
+      ( filename, *( boost::is_convertible<mpl::_,std::string> ), option(_name="gmsh.filename").template as<std::string>() )
+      ( desc, *,boost::shared_ptr<gmsh_type>() )  // geo() can't be used here as default !!
+
+      ( h,              *( boost::is_arithmetic<mpl::_> ), option(_name="gmsh.hsize").template as<double>() )
+      ( straighten,          (bool), option(_name="gmsh.straighten").template as<bool>() )
+      ( refine,          *( boost::is_integral<mpl::_> ), option(_name="gmsh.refine").template as<int>() )
+      ( update,          *( boost::is_integral<mpl::_> ), MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES )
+      ( physical_are_elementary_regions,		   (bool), option(_name="gmsh.physical_are_elementary_regions").template as<bool>() )
+      ( worldcomm,       (WorldComm), Environment::worldComm() )
+      ( force_rebuild,   *( boost::is_integral<mpl::_> ), option(_name="gmsh.rebuild").template as<bool>() )
+      ( respect_partition,	(bool), option(_name="gmsh.respect_partition").template as<bool>() )
+      ( rebuild_partitions,	(bool), option(_name="gmsh.partition").template as<bool>() )
+      ( rebuild_partitions_filename, *( boost::is_convertible<mpl::_,std::string> )	, filename )
+      ( partitions,      *( boost::is_integral<mpl::_> ), worldcomm.globalSize() )
+      ( partitioner,     *( boost::is_integral<mpl::_> ), option(_name="gmsh.partitioner").template as<int>() )
+      ( partition_file,   *( boost::is_integral<mpl::_> ), 0 )
+      ( depends, *( boost::is_convertible<mpl::_,std::string> ), option(_name="gmsh.depends").template as<std::string>() )
+        )
+    )
+{
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsequenced"
+#endif
+    typedef typename Feel::detail::mesh<Args>::type _mesh_type;
+    typedef typename Feel::detail::mesh<Args>::ptrtype _mesh_ptrtype;
+
+    // look for mesh_name in various directories (executable directory, current directory. ...)
+    // return an empty string if the file is not found
+
+    fs::path mesh_name=fs::path(Environment::findFile(filename));
+    LOG_IF( WARNING, mesh_name.extension() != ".geo" && mesh_name.extension() != ".msh" )
+        << "Invalid filename " << filename << " it should have either the .geo or .msh extension\n";
+
+
+    if ( mesh_name.extension() == ".geo" )
+    {
+
+        return createGMSHMesh(
+            _mesh=mesh,
+            _desc= (!desc) ? geo( _filename=mesh_name.string(),
+                                  _h=h,
+                                  _depends=depends,
+                                  _worldcomm=worldcomm  ) : desc ,
+            _h=h,
+            _straighten=straighten,
+            _refine=refine,
+            _update=update,
+            _physical_are_elementary_regions=physical_are_elementary_regions,
+            _force_rebuild=force_rebuild,
+            _worldcomm=worldcomm,
+            _respect_partition=respect_partition,
+            _rebuild_partitions=rebuild_partitions,
+            _rebuild_partitions_filename=rebuild_partitions_filename,
+            _partitions=partitions,
+            _partitioner=partitioner,
+            _partition_file=partition_file
+            );
+    }
+
+    if ( mesh_name.extension() == ".msh"  )
+    {
+        return loadGMSHMesh( _mesh=mesh,
+                             _filename=mesh_name.string(),
+                             _straighten=straighten,
+                             _refine=refine,
+                             _update=update,
+                             _physical_are_elementary_regions=physical_are_elementary_regions,
+                             _worldcomm=worldcomm,
+                             _respect_partition=respect_partition,
+                             _rebuild_partitions=rebuild_partitions,
+                             _rebuild_partitions_filename=rebuild_partitions_filename,
+                             _partitions=partitions,
+                             _partitioner=partitioner,
+                             _partition_file=partition_file
+            );
+
+    }
+
+    LOG(WARNING) << "File " << mesh_name << " not found, generating instead an hypercube in " << _mesh_type::nDim << "D geometry and mesh...";
+    return createGMSHMesh(_mesh=mesh,
+                          _desc=domain( _name=option(_name="gmsh.domain.shape").template as<std::string>(), _h=h ),
+                          _h=h,
+                          _refine=refine,
+                          _update=update,
+                          _physical_are_elementary_regions=physical_are_elementary_regions,
+                          _force_rebuild=force_rebuild,
+                          _worldcomm=worldcomm,
+                          _respect_partition=respect_partition,
+                          _rebuild_partitions=rebuild_partitions,
+                          _rebuild_partitions_filename=rebuild_partitions_filename,
+                          _partitions=partitions,
+                          _partitioner=partitioner,
+                          _partition_file=partition_file );
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+} // loadMesh
+\end{lstlisting}
+
+On va alors utiliser la méthode présente dans le lien suivant afin de wrapper cette méthode:
+\url{http://www.boost.org/doc/libs/1_55_0/libs/parameter/doc/html/python.html#class-template-init}
+
+Ce qui nous donne :
+\begin{lstlisting}
+struct loadMesh_fwd
+{
+    template<class A0,class A1,class A2,class A3,class A4,class A5,class A6,class A7,class A8,class A9,class A10,class A11,class A12,class A13,class A14,class A15>
+void operator() ( 
+        boost::type<Feel::detail::mesh<Args>::ptrtype>, &self, A0 const& a0, A1 const& a1,A2 const& a2,A3 const& a3,A4 const& a4,A5 const& a5,A6 const& a6,A7 const& a7,A8 const& a8,A9 const& a9,A10 const& a10,A11 const& a11,A12 const& a12,A13 const& a13,A14 const& a14,A15 const& a15
+        )
+    {
+        self.loadMesh(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15);
+    }
+};
+\end{lstlisting}
+
+
+
+A partir d'ici, j'ai fait plusieurs tentatives de wrapping qui se sont soldés par des échecs
+
+\subsection{Premier essai}
+
+
+\begin{lstlisting} 
+
+struct exporter_fwd
+   {
+   template <class A0,class A1,class A2,class A3,class A4,class A5,typename Args>
+   typename Feel::detail::compute_exporter_return<Args>::ptrtype
+   operator() 
+   (boost::type<typename Feel::detail::compute_exporter_return<Args>::ptrtype>
+   , A0 const& a0, A1 const& a1 , A2 const& a2 , A3 const& a3 , A4 const& a4, A5 const& a5)
+   {
+   exporter(a0,a1,a2,a3,a4,a5);
+   }
+   };
+
+BOOST_PYTHON_MODULE(libMesh)
+{
+   
+   if (import_mpi4py()<0) return ;
+       
+   class_<Feel::Simplex<2>>("Simplex",init<>())
+    .def("dim",&Feel::Simplex<2>::dimension);
+   
+   
+   class_<Feel::Mesh<Feel::Simplex<2>>,boost::noncopyable>("Mesh",init<>());
+
+    
+    def(
+        "loadMesh",py::function<
+                loadMesh_fwd
+                ,mpl::vector<
+                    Feel::detail::mesh<Args>::ptrtype
+                    , tag::mesh(*)
+                    , tag::filename*(*(boost::is_convertible<mpl::_,std::string>))
+                    , tag::desc*(*)
+                    , tag::h*(*(boost::is_arithmetic<mpl::_>))
+                    , tag::straighten*(bool)
+                    , tag::refine*(*(boost::is_integral<mpl::_>))
+                    , tag::update*(*(boost::is_integral<mpl::_>))
+                    , tag::physical_are_elementary_regions*(bool)
+                    , tag::worldcomm*(WorldComm)
+                    , tag::force_rebuild*(*(boost::is_integral<mpl::_>))
+                    , tag::respect_partition*(bool)
+                    , tag::rebuild_partitions*(bool)
+                    , tag::partitions*(*(boost::is_integral<mpl::_>))
+                    , tag::partitioner*(*(boost::is_integral<mpl::_>))
+                    , tag::partition_file*(*(boost::is_integral<mpl::_>))
+                    , tag::depends*(*(boost::is_convertible<mpl::_,std::string>))
+                    >
+           >()
+     );
+}
+\end{lstlisting}
+
+\subsection{Second essai}
+
+Avec un changement de type de retour 
+\begin{lstlisting}
+       def(
+       "loadMesh",
+       py::function<
+       loadMesh_fwd
+       ,mpl::vector<
+       boost::shared_ptr<Mesh<Simplex<2>>>
+       , tag::mesh(*(Mesh<Simplex<2>>))
+       , tag::filename*(*(boost::is_convertible<mpl::_,std::string>))
+       , tag::desc*(Feel::po::options_description const&)
+       , tag::h*(*(boost::is_arithmetic<mpl::_>))
+       , tag::straighten*(bool)
+       , tag::refine*(*(boost::is_integral<mpl::_>))
+       , tag::update*(*(boost::is_integral<mpl::_>))
+       , tag::physical_are_elementary_regions*(bool)
+       , tag::worldcomm*(WorldComm)
+       , tag::force_rebuild*(*(boost::is_integral<mpl::_>))
+       , tag::respect_partition*(bool)
+       , tag::rebuild_partitions*(bool)
+       , tag::rebuild_partitions_filename*(*(boost::is_convertible<mpl::_,std::string>))
+       , tag::partitions*(*(boost::is_integral<mpl::_>))
+       , tag::partitioner*(*(boost::is_integral<mpl::_>))
+       , tag::partition_file*(*(boost::is_integral<mpl::_>))
+       , tag::depends*(*(boost::is_convertible<mpl::_,std::string>))
+
+       >
+       >()
+       );
+\end{lstlisting}
+ 
+
+\subsection{Troisième essai }
+Avec une méthode def présenté dans le document donné précédemment :
+\begin{lstlisting}
+def<
+       loadMesh_fwd
+       ,mpl::vector<
+    //Feel::detail::mesh<Mesh<Simplex<2>>>::ptrtype
+    Mesh<Simplex<2>>
+    , tag::mesh(Mesh<Simplex<2>>)
+    , tag::filename*(*(boost::is_convertible<mpl::_,std::string>))
+    , tag::desc*(Feel::po::options_description const&)
+    , tag::h*(*(boost::is_arithmetic<mpl::_>))
+    , tag::straighten*(bool)
+    , tag::refine*(*(boost::is_integral<mpl::_>))
+    , tag::update*(*(boost::is_integral<mpl::_>))
+    , tag::physical_are_elementary_regions*(bool)
+    , tag::worldcomm*(WorldComm)
+    , tag::force_rebuild*(*(boost::is_integral<mpl::_>))
+    , tag::respect_partition*(bool)
+    , tag::rebuild_partitions*(bool)
+    , tag::rebuild_partitions_filename*(*(boost::is_convertible<mpl::_,std::string>))
+    , tag::partitions*(*(boost::is_integral<mpl::_>))
+    , tag::partitioner*(*(boost::is_integral<mpl::_>))
+    , tag::partition_file*(*(boost::is_integral<mpl::_>))
+    , tag::depends*(*(boost::is_convertible<mpl::_,std::string>))
+
+    >
+    >("loadMesh");
+\end{lstlisting}
+
+\newpage
+\subsection{Quatrième essai}
+
+Avec d'autres types ...
+\begin{lstlisting}
+def(
+       "loadMesh",
+       py::function<
+       loadMesh_fwd
+       ,mpl::vector<
+    // Feel::detail::mesh<Mesh<Simplex<2>>>::ptrtype
+    Mesh<Simplex<2>>
+    , tag::mesh(Mesh<Simplex<2>>)
+    , tag::filename*(std::string)
+    , tag::desc*(Feel::po::options_description const&)
+    , tag::h*(double)
+    , tag::straighten*(bool)
+    , tag::refine*(int)
+    , tag::update*(int)
+    , tag::physical_are_elementary_regions*(bool)
+    , tag::worldcomm*(WorldComm)
+    , tag::force_rebuild*(bool)
+    , tag::respect_partition*(bool)
+    , tag::rebuild_partitions*(bool)
+    , tag::rebuild_partitions_filename*(bool)
+    , tag::partitions*(int)
+    , tag::partitioner*(int)
+    , tag::partition_file*(int)
+    , tag::depends*(std::string)
+    >
+    >()
+    );
+\end{lstlisting}
+
+Malheureusement, à la compilation, il ne semble pas reconnaitre la présence d'une méthode pouvant correspondre à cela.
+
+Suite à cela, je me suis lancé dans le wrapping de la méthode exporter en parallèle de loadMesh , afin de voir si j'obtenais la même erreur avec une méthode qui semblait plus simple.
+
+\section{Wrapping de la méthode exporter }
+
+Dans la même idée que loadMesh, on veut wrapper la BOOST\_PARAMETER\_FUNCTION suivante :
+
+\begin{lstlisting}
+BOOST_PARAMETER_FUNCTION( ( typename Feel::detail::compute_exporter_return<Args>::ptrtype ),
+                          exporter,                                       // 2. name of the function template
+                          tag,                                        // 3. namespace of tag types
+                          ( required                                  // 4. one required parameter, and
+                            ( mesh, * )
+                          ) // required
+                          ( optional                                  // 4. one required parameter, and
+                            ( fileset, *, option(_name="exporter.fileset").template as<bool>() )
+                            ( order, *, mpl::int_<1>() )
+                            ( name,  *, Environment::about().appName() )
+                            ( geo,   *, option(_name="exporter.geometry").template as<std::string>() )
+                            ( path, *( boost::is_convertible<mpl::_,std::string> ), std::string(".") )
+                          ) )
+{
+    typedef typename Feel::detail::compute_exporter_return<Args>::type exporter_type;
+    auto e =  exporter_type::New( Environment::vm(),name,mesh->worldComm() );
+    e->setPrefix( name );
+    e->setUseSingleTransientFile( fileset );
+    if ( geo == "change_coords_only" )
+        e->setMesh( mesh, EXPORTER_GEOMETRY_CHANGE_COORDS_ONLY );
+    else if ( geo == "change" )
+        e->setMesh( mesh, EXPORTER_GEOMETRY_CHANGE );
+    else // default
+        e->setMesh( mesh, EXPORTER_GEOMETRY_STATIC );
+    e->setPath( path );
+    // addRegions not work with transient simulation!
+    //e->addRegions();
+    return e;
+    //return Exporter<Mesh<Simplex<2> >,1>::New();
+}
+\end{lstlisting}
+
+On  essaie alors de construire une structure comme précédemment :
+\begin{lstlisting}
+struct exporter_fwd
+   {
+   template <class A0,class A1,class A2,class A3,class A4,class A5>
+//typename Feel::detail::compute_exporter_return<Args>::ptrtype
+std::shared_ptr<Exporter<Mesh<Simplex<2> >,1>>
+operator() 
+(//boost::type<typename Feel::detail::compute_exporter_return<Args>::ptrtype>
+boost::type<std::shared_ptr<Exporter<Mesh<Simplex<2>>,1>>>
+, A0 const& a0, A1 const& a1 , A2 const& a2 , A3 const& a3 , A4 const& a4, A5 const& a5)
+{
+exporter(a0,a1,a2,a3,a4,a5);
+}
+};
+\end{lstlisting}
+
+On peut alors écrire dans le BOOST\_PYTHON\_MODULE :
+\begin{lstlisting}
+def(
+       "exporter",
+       py::function<
+       exporter_fwd
+       ,mpl::vector<
+    // Exporter<Mesh<Simplex<2>>,1>
+    //typename Feel::detail::compute_exporter_return<Exporter<Mesh<Simplex<2>>>>::ptrtype 
+    std::shared_ptr<Exporter<Mesh<Simplex<2> >,1>> 
+    , tag::mesh(Mesh<Simplex<2>>)
+    , tag::fileset*(bool)
+    , tag::order*(int)
+    , tag::name*(std::string)
+    , tag::geo*(std::string)
+    , tag::path*(std::string) 
+    >
+    >()
+    );
+\end{lstlisting}
+
+On obtient malheureusement les mêmes résultats qu'avec loadMesh, c'est à dire des erreurs sur la reconnaissance de la méthode associée
+
+\section{Derniers Tests}
+
+J'ai effectuer quelques tests supplémentaires sur la méthode loadMesh afin de comprendre et de peut-être corriger l'erreur obtenue.
+
+J'ai donc tout d'abord réécrit une nouvelle BOOST\_PARAMETER\_FUNCTION avec pour seul argument le maillage mesh, définit comme suivant :
+
+\begin{lstlisting}
+ BOOST_PARAMETER_FUNCTION(
+            ( typename Feel::detail::mesh<Args>::ptrtype ), // return type
+            loadMesh2,    // 2. function name
+
+            tag,           // 3. namespace of tag types
+
+            ( required
+              ( mesh, *)
+
+            ) // 4. one required parameter, and
+
+            )
+    {
+        loadMesh(_mesh=mesh);
+    }
+\end{lstlisting}
+
+On obtient cependant les mêmes résultats d'erreurs suite au wrapping suivant :
+\begin{lstlisting}
+def(
+            "loadmesh2",
+            py::function<
+            loadMesh2_fwd,
+            mpl::vector<
+            boost::shared_ptr<Mesh<Simplex<2>>>,
+            tag::mesh (Mesh<Simplex<2>>*)
+            >
+            >()
+       );
+\end{lstlisting}
+
+\vspace{0.5 cm}
+Les 2 cas suivant peuvent être plus intéressant car le module associé compile mais cause des erreurs à l'exécution du script Python.
+
+\vspace{0.5 cm}
+Premièrement, on implémente une simple méthode qui à partir d'un objet de type Mesh appelle loadMesh et retourne le résultat.
+\begin{lstlisting}
+boost::shared_ptr<Mesh<Simplex<2>>> loadMesh3 (Mesh<Simplex<2>>* mesh)
+ {
+    return loadMesh(_mesh=mesh);
+ }
+\end{lstlisting}
+
+\vspace{0.5 cm}
+Deuxièmement on implemente une méthode reprenant l'intégralité du code présent dans la BOOST\_PARAMETER\_FUNCTION avec les valeurs par défaut sauf pour le maillage.
+\begin{lstlisting}
+boost::shared_ptr<Mesh<Simplex<2>>> loadMesh4 (Mesh<Simplex<2>>* mesh)
+       {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsequenced"
+#endif
+    //typedef typename Feel::detail::mesh<Args>::type _mesh_type;
+    //typedef typename Feel::detail::mesh<Args>::ptrtype _mesh_ptrtype;
+
+    // look for mesh_name in various directories (executable directory, current directory. ...)
+    // return an empty string if the file is not found
+
+    fs::path mesh_name=fs::path(Environment::findFile(option(_name="gmsh.filename").template as<std::string>() ));
+    LOG_IF( WARNING, mesh_name.extension() != ".geo" && mesh_name.extension() != ".msh" )
+    << "Invalid filename " <<  " it should have either the .geo or .msh extension\n";
+
+
+    if ( mesh_name.extension() == ".geo" )
+    {
+
+    return createGMSHMesh(
+    _mesh=mesh,
+    _desc= boost::shared_ptr<gmsh_type>(),
+    _h=option(_name="gmsh.hsize").template as<double>() ,
+    _straighten=option(_name="gmsh.straighten").template as<bool>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _force_rebuild=option(_name="gmsh.rebuild").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+    _partitions=Environment::worldComm().globalSize(),
+    _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+    _partition_file=0           
+    );
+    }
+
+    if ( mesh_name.extension() == ".msh"  )
+    {
+    return loadGMSHMesh( _mesh=mesh,
+    _filename=mesh_name.string(),
+    _straighten=option(_name="gmsh.straighten").template as<bool>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+    _partitions=Environment::worldComm().globalSize(),
+    _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+    _partition_file=0   
+    );
+
+    }
+
+    LOG(WARNING) << "File " << mesh_name << " not found, generating instead an hypercube in " <<  "D geometry and mesh...";
+    return createGMSHMesh(
+    _mesh=mesh,
+    _desc= domain( _name=option(_name="gmsh.domain.shape").template as<std::string>(), _h=option(_name="gmsh.hsize").template as<double>()  ),
+    _h=option(_name="gmsh.hsize").template as<double>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _force_rebuild=option(_name="gmsh.rebuild").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+        _partitions= Environment::worldComm().globalSize(),
+        _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+        _partition_file=0   
+
+            );
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+} // loadMesh
+\end{lstlisting}
+
+On obtient cependant à l'exécution un erreur de type free(): invalid pointer 
+
+\begin{lstlisting}
+Error in `/usr/bin/python': free(): invalid pointer: 0x000000000172cdf0 ***
+*** Aborted at 1405084752 (unix time) try "date -d @1405084752" if you are using GNU date ***
+PC: @     0x7f7d584dd407 (unknown)
+*** SIGABRT (@0x5ed0000fa02) received by PID 64002 (TID 0x7f7d595c7700) from PID 64002; stack trace: ***
+    @     0x7f7d591978f0 (unknown)
+    @     0x7f7d584dd407 (unknown)
+    @     0x7f7d584e0508 (unknown)
+    @     0x7f7d58516e44 (unknown)
+    @     0x7f7d58520b8e (unknown)
+    @     0x7f7d58521896 (unknown)
+    @     0x7f7d230195d2 Feel::Mesh<>::~Mesh()
+    @     0x7f7d232cddfe boost::checked_delete<>()
+    @     0x7f7d232cde79 boost::detail::sp_counted_impl_p<>::dispose()
+    @     0x7f7d23017392 boost::detail::sp_counted_base::release()
+    @     0x7f7d2301732d boost::detail::shared_count::~shared_count()
+    @     0x7f7d230172ec boost::shared_ptr<>::~shared_ptr()
+    @     0x7f7d230171ee boost::python::detail::invoke<>()
+    @     0x7f7d2301708f boost::python::detail::caller_arity<>::impl<>::operator()()
+    @     0x7f7d23016787 boost::python::objects::caller_py_function_impl<>::operator()()
+    @     0x7f7d3e9f100a (unknown)
+    @     0x7f7d3e9f1378 (unknown)
+    @     0x7f7d3e9fb653 (unknown)
+    @     0x7f7d3e9efc83 (unknown)
+    @           0x5312b5 (unknown)
+    @           0x5662f0 (unknown)
+    @           0x466070 (unknown)
+    @           0x4665a9 (unknown)
+    @           0x46720e (unknown)
+    @     0x7f7d584c9b45 (unknown)
+    @           0x56e67e (unknown)
+Aborted
+\end{lstlisting}
+
+
+\section{Travaux en cours}
+- Suite du travail sur la méthode loadMesh et exporter
+- Étude des solutions possibles proposées ( ImportGmsh<MeshType> ,.....)
+- Recherche et documentation sur la suite des classes et méthodes 
+
+\section{Problèmes rencontrés en cours de semaine}
+- Soucis de wrapping avec les BOOST\_PARAMETER\_FUNCTION pour loadMesh et exporter 
+\end{document}
+	
