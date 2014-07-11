@@ -1,0 +1,154 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=C++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ %numbers=left,
+ %numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Sélection du type des éléments du maillage}
+En fonction de la dimension et l'ordre géométrique du maillage, on sélectionne le type des éléments  :
+\begin{lstlisting}
+if ( mesh_type::nDim == 1 )
+if ( mesh_type::Shape == SHAPE_LINE )
+    M_element_type = ( mesh_type::nOrder == 1 )?"Polyline":"Edge_3";
+
+if ( mesh_type::nDim == 2 )
+{
+    if ( mesh_type::Shape == SHAPE_TRIANGLE )
+        M_element_type = ( mesh_type::nOrder == 1 )?"Triangle":"Tri_6";
+
+    else if ( mesh_type::Shape == SHAPE_QUAD )
+        M_element_type = ( mesh_type::nOrder == 1 )?"Quadrilateral":"Quad_8";
+}
+
+if ( mesh_type::nDim == 3 )
+{
+    if ( mesh_type::Shape == SHAPE_TETRA )
+        M_element_type = ( mesh_type::nOrder == 1 )?"Tetrahedron":"Tet_10";
+
+    else if ( mesh_type::Shape == SHAPE_HEXA )
+        M_element_type = ( mesh_type::nOrder == 1 )?"Hexahedron":"Hex_20";
+}
+\end{lstlisting}
+(Note j'ai fait des tests d'exportation que sur des maillages 2D et 3D, mais je pense que le 1D devrait fonctionner aussi)
+
+\section {Correction de l'exportation des éléments}
+Après plusieurs tests sur des maillages 2D et 3D, on s'est rendu compte que l'exportation des maillages avec marqueurs (physical name) ne fonctionnait pas totalement. Pour corriger cette erreur, il a fallu que je parcours l'ensemble des éléments de chaque partition pour avoir la totalité des éléments.
+
+\begin{lstlisting}
+template <typename MeshType, int N>
+void Exporterhdf5<MeshType, N>::writeElements1 ()
+{
+    //Initialisation of partitions
+    typename mesh_type::parts_const_iterator_type p_it = M_meshOut->beginParts();
+    typename mesh_type::parts_const_iterator_type p_en = M_meshOut->endParts();
+    M_numParts = std::distance (p_it, p_en) ;
+
+    //Count the total number of elements
+    M_maxNumElements = 0 ;
+    for (int i = 0 ; i < M_numParts ; i++, p_it ++) 
+    {
+        auto elt_it = M_meshOut->beginElementWithMarker (p_it->first) ;
+        auto elt_en = M_meshOut->endElementWithMarker (p_it->first) ;
+        M_maxNumElements += std::distance (elt_it, elt_en) ;
+        std::cout << "std::distance (elt_it, elt_en) : " << std::distance(elt_it, elt_en) << std::endl ;
+    }
+
+    //Number of nodes per element
+    M_elementNodes = M_meshOut-> numLocalVertices () ;
+
+    hsize_t currentSpacesDims [2] ;
+    hsize_t currentSpacesDims2 [2] ;
+
+    currentSpacesDims [0] = M_maxNumElements ;
+    currentSpacesDims [1] = M_elementNodes ;
+
+    currentSpacesDims2 [0] = 1 ;
+    currentSpacesDims2 [1] = M_maxNumElements ;
+
+    M_HDF5.createTable ("element_ids", H5T_STD_U32BE, currentSpacesDims2) ;
+    M_HDF5.createTable ("element_nodes", H5T_STD_U32BE, currentSpacesDims) ;
+
+    M_uintBuffer.resize (currentSpacesDims[0]*currentSpacesDims[1], 0) ;
+    std::vector<size_type> idsBuffer ;
+    idsBuffer.resize (currentSpacesDims2[1], 0) ;
+
+    M_uintBuffer.resize (currentSpacesDims[0]*currentSpacesDims[1], 0) ;
+
+    size_type k = 0 ; //counter for partitions
+    size_type i = 0 ; //counter for elements
+    for (p_it = M_meshOut->beginParts (); k < M_numParts ;  p_it++ , k++)
+    {
+        auto elt_it = M_meshOut->beginElementWithMarker (p_it->first) ;
+        auto elt_en = M_meshOut->endElementWithMarker (p_it->first) ;
+        for ( ; elt_it != elt_en ; ++elt_it , i ++)
+        {
+            idsBuffer[i] = elt_it->id () ;
+            for ( size_type j = 0 ; j < M_elementNodes ; j ++ )
+                M_uintBuffer[j + M_elementNodes*i] = elt_it->point(j).id() -1 ; 
+        }
+    }
+
+    hsize_t currentOffset[2] = {0, 0} ;
+    M_HDF5.write ( "element_ids", H5T_NATIVE_LLONG, currentSpacesDims2, currentOffset, &idsBuffer[0] ) ;
+    M_HDF5.write ( "element_nodes", H5T_NATIVE_LLONG, currentSpacesDims, currentOffset, &M_uintBuffer[0] ) ;
+
+    M_HDF5.closeTable ("element_ids") ;
+    M_HDF5.closeTable ("element_nodes") ;
+}
+\end{lstlisting}
+Ce code n'est pas encore optimisé, en effet il faudrait utiliser un buffer différent pour chaque partition et pas les regrouper dans un seul buffer.
+
+\section {Exportation des données sur les noeuds}
+Pour l'instant je vois à peu près comment on accède aux données des noeuds, mais je rencontre quelques problèmes techniques avec la classe timeset. Tout d'abord pour exporter les données des solutions générés par feel++, il est inévitable de passer par les "timeset". De ce fait je dois faire hérité ma classe de la classe \emph{Exporter}, en redéfinissant toutes les méthodes \emph{virtual} (ces méthodes ont des corps vide pour le moment). Ensuite il faut que je trouve les informations suivantes :
+\begin{enumerate} 
+\item la durée de la simulation
+\item le pas de temps
+\item comment stocker les données dans le fichier hdf5 pour chaque pas de temps 
+\end{enumerate}
+
+
+\end{document}
