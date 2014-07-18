@@ -1,0 +1,244 @@
+\documentclass[10pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ %IMPORTANT marge
+ framexleftmargin=0mm,
+ %framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=C++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ %numbers=left,
+ %numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Ajout de l'exporter}
+Pour que la classe \textbf{Exporter} de \emph{feel++} reconnaisse mon nouvel exporter, il a fallu que je hérite cette classe de la classe principale\textbf{Exporter}. Ensuite j'ai ajouté mon \emph{exporter} parmi tous les autres déjà présents. L'avantage de cette héritage, est que l'on peut utiliser le polymorphisme pour instancier l'exporter : 
+\begin{lstlisting}
+Exporter<MeshType, N>* exporter =  0;
+
+if ( N == 1 && ( exportername == "ensight" ) )
+exporter = new ExporterEnsight<MeshType, N>( worldComm );
+else if ( N == 1 && ( exportername == "ensightgold"  ) )
+exporter = new ExporterEnsightGold<MeshType, N>( worldComm );
+else if ( N == 1 && ( exportername == "exodus"  ) )
+exporter = new ExporterExodus<MeshType, N>( worldComm );
+else if ( N == 1 && ( exportername == "hdf5" ))
+exporter = new Exporterhdf5<MeshType, N> ( worldComm ) ;
+else if ( N > 1 || ( exportername == "gmsh" ) )
+exporter = new ExporterGmsh<MeshType,N>;
+else // fallback
+exporter = new ExporterEnsight<MeshType, N>( worldComm );
+\end{lstlisting}
+Pour utiliser l'exporter au format hdf5, il suffit de mettre cette option : \textbf{--exporter.format=hdf5}\newline 
+En héritant de la classe \textbf{Exporter}, on doit redéfinir les méthodes \emph{virtual} visit et save. La méthode save, commune aux autres exporter, est appelée pour permettre l'écriture dans les fichiers.\newline
+Voici l'implémentation de la méthode \emph{write} qui a pour but d'écrire les informations sur le maillage (points, éléments) et les solutions.
+\begin{lstlisting}
+template <typename MeshType, int N>
+void Exporterhdf5<MeshType, N>::write () const 
+{
+    char buffer [100] ;
+    M_fileName = this->prefix () ;
+    open_xdmf_xml () ;
+
+    timeset_const_iterator __ts_it = this->beginTimeSet () ;
+    timeset_const_iterator __ts_en = this->endTimeSet () ;
+
+    timeset_ptrtype __ts = *__ts_it ;
+
+    fprintf (M_xmf, "       <Grid Name=\"Simulation over time\" GridType=\"Collection\">\n") ;
+    fprintf (M_xmf, "           <Time TimeType=\"HyperSlab\">\n") ;
+    fprintf (M_xmf, "               <DataItem Format=\"XML\" NumberType=\"Float\" Dimensions=\"3\">\n") ;
+    fprintf (M_xmf, "               %f %f %d\n", (*(__ts->beginStep()))->time(), __ts->timeIncrement(), __ts->numberOfTotalSteps()) ;
+    fprintf (M_xmf, "               </DataItem>\n") ;
+    fprintf (M_xmf, "           </Time>\n") ;
+
+    while ( __ts_it != __ts_en )
+    {
+        __ts = *__ts_it ;
+        typename timeset_type::step_const_iterator __it = __ts->beginStep () ;
+        typename timeset_type::step_const_iterator __end = __ts->endStep () ;
+        __it = boost::prior ( __end ) ;
+
+        while ( __it != __end )
+        {
+            typename timeset_type::step_ptrtype __step = * __it ;
+
+            if ( __step->isInMemory() )
+            {
+                M_meshOut = __step->mesh () ;
+                sprintf (buffer, "%zu", M_step++) ;
+                M_fileNameStep = M_fileName+buffer ;
+                M_HDF5.openFile (M_fileNameStep+".h5", M_comm, false) ;
+                fprintf (M_xmf, "           <Grid Name=\"%s\" GridType=\"Uniform\">\n", M_fileNameStep.c_str()) ;
+
+                writeElements1 () ;
+                writePoints () ;
+
+                saveNodal (__step, __step->beginNodalScalar(), __step->endNodalScalar() ) ;
+                saveNodal (__step, __step->beginNodalVector(), __step->endNodalVector() ) ;
+
+                fprintf (M_xmf, "           </Grid>\n") ;
+                M_HDF5.closeFile () ;
+            }
+            ++__it ;
+        }
+        ++__ts_it ;
+    }
+
+    close_xdmf_xml () ;
+
+}
+\end{lstlisting}
+\subsection {Explication de la méthode précédent}
+Le but de cette méthode est d'écrire un seul fichier au format xdmf, qui contiendra les métadonnées, et autant de fichier hdf5 qu'il y a de pas temps dans la simulation.
+On considère ici que la géométrie n'est pas pas static, donc on sauvegardera les points, les éléments, et les données pour chaque fichier hdf5.
+Voici une petite explication du code précédent :
+\begin{enumerate}
+\item On commence par ouvrir le fichier xdmf à l'aide de la méthode open\_xdmf\_xml ()
+\begin{lstlisting}
+template <typename MeshType, int N>
+void Exporterhdf5<MeshType, N>::open_xdmf_xml () const
+{
+    M_xmf = fopen ((M_fileName+".xmf").c_str(), "w") ;
+    fprintf (M_xmf, "<?xml version=\"1.0\" ?>\n") ;
+    fprintf (M_xmf, "<!DOCTYPE Xdmf SYSTEM \"Xdmf.dtd\" []>\n") ;
+    fprintf (M_xmf, "<Xdmf Version=\"2.0\">\n") ;
+    fprintf (M_xmf, "   <Domain>\n") ;
+}
+\end{lstlisting}
+\item On écrit dans le fichier xdmf le temps initial de la simulation, le pas de temps, et le nombre de pas.
+\item A chaque pas de temps 
+\begin{enumerate}
+\item on ouvre un nouveau fichier hdf5 avec un nom unique, (par exemple mylaplacian1.h5 pour le premier pas de temps)
+\item on écrit les points, éléments et données dans ce fichier
+\item on referme le fichier hdf5
+\end{enumerate}
+\item on referme proprement le fichier xdmf
+\end{enumerate}
+\section {Ecriture des données sur les noeuds}
+Pour écrire les données sur les noeuds, on utilise la méthode \emph{saveNodal}. Cette méthode prend en paramètre un pointeur sur le pas de temps courant, et un itérateur sur les données. Le type de ces données peuvent être soit "Scalar" ou soit "Vector".
+Voici à quoi ressemble ce code :
+\begin{lstlisting}
+template <typename MeshType, int N>
+template <typename Iterator>
+void Exporterhdf5<MeshType, N>::saveNodal ( typename timeset_type::step_ptrtype __step, Iterator __var, Iterator en ) const 
+{   
+    if ( __var == en )
+        return ;
+
+    std::string attributeType ("Scalar") ;
+
+    std::string solutionName = __var->first ;
+
+    hsize_t currentSpacesDims [2] ;
+
+    currentSpacesDims [0] = 1 ;
+    currentSpacesDims [1] = M_maxNumPoints ;
+
+    M_HDF5.createTable ("dataNodes", H5T_IEEE_F64BE, currentSpacesDims) ;
+    uint16_type nComponents = 1 ;
+
+    while ( __var != en )
+    {
+        uint16_type nComponents = __var -> second.nComponents ;
+        if ( __var->second.is_vectorial ) 
+        {
+            nComponents = 3 ;
+            attributeType = "Vector" ;
+        }
+        M_realBuffer.resize (M_maxNumPoints*nComponents, 0) ;
+
+        typename mesh_type::parts_const_iterator_type p_it = M_meshOut->beginParts();
+        typename mesh_type::parts_const_iterator_type p_en = M_meshOut->endParts();
+        M_numParts = std::distance (p_it, p_en) ;
+
+        for ( ; p_it != p_en ; p_it++) 
+        {
+
+            auto r = markedelements (M_meshOut, p_it->first, EntityProcessType::ALL) ;
+            auto elt_it = r.template get<1>() ;
+            auto elt_en = r.template get<2>() ;
+
+            Feel::detail::MeshPoints<float> mp ( __step->mesh().get(), elt_it, elt_en, true, true, true ) ;
+
+            size_type e = 0 ; 
+            int index = 0 ;
+            for ( ; elt_it != elt_en ; ++elt_it )
+            {
+                for ( uint16_type c = 0 ; c < nComponents ; ++c )
+                {
+                    for ( uint16_type p = 0 ; p < __step->mesh()->numLocalVertices() ; ++p, ++e )
+                    {
+                        size_type ptid = elt_it->get().point(p).id()-1 ;
+                        size_type global_node_id = mp.ids.size()*c + ptid ;
+                        if ( c < __var->second.nComponents ) 
+                        {
+                            size_type dof_id = boost::get<0>( __var->second.functionSpace()->dof()->localToGlobal ( elt_it->get().id(), p, c ) ) ;
+                            M_realBuffer[global_node_id] = __var->second.globalValue ( dof_id ) ;
+                        }
+                        else
+                        {
+                            M_realBuffer[global_node_id] = 0.0 ;
+                        }
+                    }
+                }
+            }
+            index++ ;
+        }
+        ++__var ;
+    }
+
+    hsize_t currentOffset[2] = {0, 0} ;
+
+    M_HDF5.write ( "dataNodes", H5T_NATIVE_DOUBLE, currentSpacesDims, currentOffset, &M_realBuffer[0] ) ;
+
+    M_HDF5.closeTable ("dataNodes") ;    
+
+    fprintf (M_xmf, "           <Attribute AttributeType=\"%s\" Name=\"%s\" Center=\"Node\">\n", attributeType.c_str(), solutionName.c_str()) ;
+    fprintf (M_xmf, "               <DataItem Dimensions=\"1 %zu\" NumberType=\"Float\" Precision=\"8\" Format=\"HDF\" Endian=\"Big\">\n", M_maxNumPoints*nComponents) ;
+    fprintf (M_xmf, "               %s.h5:/dataNodes\n", M_fileNameStep.c_str()) ;
+    fprintf (M_xmf, "               </DataItem>\n") ;    
+    fprintf (M_xmf, "           </Attribute>\n") ;
+}
+\end{lstlisting}
+Il est important de préciser que dans cette méthode, on écrit les données dans le fichier hdf5, et on écrit dans le fichier xdmf les informations concernant ces données (type des données, taille du tableau de données, emplacement des données, etc).
+\end{document}
