@@ -1,0 +1,335 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Pour cette septième semaine de stage, j'ai tenté de résoudre les soucis de la semaine dernière autour du wrapping des méthodes loadMesh et exporter.
+Pour se faire, j'ai utilisé diverses méthodes que je développerais pour certaines plus en détail dans la suite de ce rapport 
+
+\section{Wrapping de la méthode loadMesh}
+
+On revient une nouvelle fois sur la méthode loadMesh qui continue de poser quelques problèmes de wrapping. On s'était laissé sur 2 exemples qui compilait la semaine dernière, mais qui provoquait une erreur de segmentation à l'exécution .
+
+Pour rappel, voici ces 2 méthodes :
+
+\subsection{Méthode 1}
+\begin{lstlisting}
+boost::shared_ptr<Mesh<Simplex<2>>> loadMesh3 (Mesh<Simplex<2>>* mesh)
+ {
+    return loadMesh(_mesh=mesh);
+ }
+\end{lstlisting}
+
+\vspace{0.5 cm}
+\subsection{Méthode 2}
+\begin{lstlisting}
+boost::shared_ptr<Mesh<Simplex<2>>> loadMesh4 (Mesh<Simplex<2>>* mesh)
+       {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsequenced"
+#endif
+    //typedef typename Feel::detail::mesh<Args>::type _mesh_type;
+    //typedef typename Feel::detail::mesh<Args>::ptrtype _mesh_ptrtype;
+
+    // look for mesh_name in various directories (executable directory, current directory. ...)
+    // return an empty string if the file is not found
+
+    fs::path mesh_name=fs::path(Environment::findFile(option(_name="gmsh.filename").template as<std::string>() ));
+    LOG_IF( WARNING, mesh_name.extension() != ".geo" && mesh_name.extension() != ".msh" )
+    << "Invalid filename " <<  " it should have either the .geo or .msh extension\n";
+
+
+    if ( mesh_name.extension() == ".geo" )
+    {
+
+    return createGMSHMesh(
+    _mesh=mesh,
+    _desc= boost::shared_ptr<gmsh_type>(),
+    _h=option(_name="gmsh.hsize").template as<double>() ,
+    _straighten=option(_name="gmsh.straighten").template as<bool>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _force_rebuild=option(_name="gmsh.rebuild").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+    _partitions=Environment::worldComm().globalSize(),
+    _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+    _partition_file=0           
+    );
+    }
+
+    if ( mesh_name.extension() == ".msh"  )
+    {
+    return loadGMSHMesh( _mesh=mesh,
+    _filename=mesh_name.string(),
+    _straighten=option(_name="gmsh.straighten").template as<bool>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+    _partitions=Environment::worldComm().globalSize(),
+    _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+    _partition_file=0   
+    );
+
+    }
+
+    LOG(WARNING) << "File " << mesh_name << " not found, generating instead an hypercube in " <<  "D geometry and mesh...";
+    return createGMSHMesh(
+    _mesh=mesh,
+    _desc= domain( _name=option(_name="gmsh.domain.shape").template as<std::string>(), _h=option(_name="gmsh.hsize").template as<double>()  ),
+    _h=option(_name="gmsh.hsize").template as<double>() ,
+    _refine=option(_name="gmsh.refine").template as<int>() ,
+    _update=MESH_CHECK|MESH_UPDATE_FACES|MESH_UPDATE_EDGES ,
+    _physical_are_elementary_regions=option(_name="gmsh.physical_are_elementary_regions").template as<bool>() ,
+    _force_rebuild=option(_name="gmsh.rebuild").template as<bool>() ,
+    _worldcomm=Environment::worldComm(),
+    _respect_partition=option(_name="gmsh.respect_partition").template as<bool>() ,
+    _rebuild_partitions=option(_name="gmsh.partition").template as<bool>(),
+    _rebuild_partitions_filename=option(_name="gmsh.filename").template as<std::string>() ,
+        _partitions= Environment::worldComm().globalSize(),
+        _partitioner=option(_name="gmsh.partitioner").template as<int>(),
+        _partition_file=0   
+
+            );
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+} // loadMesh
+\end{lstlisting}
+\vspace{0.5 cm}
+
+Après installation et utilisation d'un gdb pour Python permettant de retrouver les causes d'une erreur de segmentation ainsi que quelques tests d'affichages, j'ai pu m'apercevoir que l'erreur était causé à la destruction de l'objet construit par loadMesh ,à la fin du script.
+On a donc décider de laisser cela tel quel pour le moment.
+
+\section{Wrapping de la méthode exporter }
+
+Suite aux problèmes précédents rencontrés la semaine dernière, semblables à ceux de loadMesh, je me suis dirigé vers une des solutions proposées : wrapper la classe Exporter ainsi que les méthodes nécessaires à son utilisation afin de reproduire le fonctionnement de la méthode exporter.
+\vspace{0.5 cm}
+
+On a donc besoin de wrapper la classe Exporter<MeshType,N> ainsi que la méthode New permettant l'initialisation d'un de ces objets. Il nous faut également la méthode setMesh, addRegions et save .
+\vspace{0.5 cm}
+
+Cependant, la classe Exporter possédant des méthodes virtual dont save , on ne peut pas wrapper simplement la classe telle quelle. On va donc choisir un exportateur héritant de cette classe, ici ExporterEnsightGold.
+
+\section{Wrapping de ExporterEnsightGold}
+
+On va donc commencer par wrapper la classe ExporterEnsightGold  ainsi que les méthodes explicitées auparavant , ce qui nous donne alors :
+
+\begin{lstlisting}
+class_<ExporterEnsightGold<Mesh<Simplex<2>>,1>>("Exporter",init<WorldComm>())
+        .def("new",&Exporter<Mesh<Simplex<2>>>::New1)
+        .def("setMesh",&Exporter<Mesh<Simplex<2>>>::setMesh) 
+        .def("addRegions",&Exporter<Mesh<Simplex<2>>>::addRegions)
+        .def("save",&ExporterEnsightGold<Mesh<Simplex<2>>,1>::save);
+\end{lstlisting}
+\vspace{0.5 cm}
+On utilisera les méthodes setMesh,addRegions et New présent dans la classe Exporter et save qui est définit dans ExporterEnsightGold.
+\vspace{0.5 cm}
+
+Cependant, la création d'une instance de ExporterEnsightGold nécessite l'utilisation de la méthode New,qui renvoie un objet de type boost$::$shared\_ptr<Exporter<MeshType,N$>>$
+Or comme évoqué précédemment, on ne peut pas instancier un objet de la classe Exporter<MeshType,N> et donc on ne peut également pas le wrapper.
+\vspace{0.5 cm}
+
+Pour contourner ce problème, j'ai écrit une nouvelle méthode qui à partir d'un boost::shared\_ptr sur un maillage ( ce qu'on obtient à partir de loadMesh ) va créer l'exportateur et y appliquer les méthodes nécessaires directement dessus.\\
+De ce fait, Python n'aura pas besoin de gérer l'objet Exporter pour lui appliquer les méthodes dans le script.
+
+La méthode peut s'écrire : 
+
+\begin{lstlisting}
+template<typename MeshType,int N>
+void expo2 ( boost::shared_ptr<MeshType> m)
+{
+  auto x=Exporter<MeshType,N>::New();
+  x->setMesh(m);
+  x->addRegions();
+  x->save();
+}
+\end{lstlisting}
+
+et la version wrappée donne :
+
+\begin{lstlisting}
+def("export",expo2<Mesh<Simplex<2>>,1>);
+\end{lstlisting}
+
+
+\section{Premiers résultats}
+
+Maintenant qu'on a terminé de récupérer l'ensemble des méthodes et classes nécessaires à la reproduction de mymesh.cpp dans un module Python , on va pouvoir l'utiliser dans un script destiné à cet effet.
+
+Tout d'abord , la création du module complet :
+
+\begin{lstlisting}
+#include <feel/feel.hpp>
+#include <boost/python.hpp>
+#include <boost/python/stl_iterator.hpp>
+#include <mpi4py/mpi4py.h>
+
+#include <boost/shared_ptr.hpp>
+#include <boost/parameter/keyword.hpp>
+#include <boost/parameter/preprocessor.hpp>
+#include <boost/parameter/binding.hpp>
+#include <boost/parameter/python.hpp>
+#include <boost/python.hpp>
+#include <boost/mpl/vector.hpp>
+
+#include<feel/feelcore/environment.hpp>
+#include<feel/feelfilters/loadmesh.hpp>
+#include<feel/feelfilters/exporter.hpp>
+#include<feel/feelfilters/detail/mesh.hpp>
+
+
+using namespace boost::python;
+using namespace Feel;
+
+namespace py = boost::parameter::python;
+
+
+
+template<typename MeshType,int N>
+void expo2 ( boost::shared_ptr<MeshType> m)
+{
+  auto x=Exporter<MeshType,N>::New();
+  x->setMesh(m);
+  x->addRegions();
+  x->save();
+}
+
+
+BOOST_PYTHON_MODULE(libPyFeelpp)
+{
+   
+   if (import_mpi4py()<0) return ;
+
+ class_<Feel::detail::Environment,boost::noncopyable>("Environment", init<boost::python::list>()) 
+       .def("worldComm",&Feel::detail::Environment::worldComm,return_value_policy<copy_non_const_reference>())
+        .staticmethod("worldComm");
+
+
+
+class_<Feel::Simplex<2>>("Simplex",init<>())
+        .def("dim",&Feel::Simplex<2>::dimension);
+
+class_<Feel::Hypercube<2>>("Hypercube",init<>())
+        .def("dim",&Feel::Hypercube<2>::dimension);
+        
+
+
+class_<Feel::Mesh<Feel::Simplex<2>>,boost::shared_ptr<Feel::Mesh<Feel::Simplex<2>>>,boost::noncopyable>("Mesh",init<>())
+        .def("new",&Feel::Mesh<Simplex<2>>::New)
+        .staticmethod("new")
+        .def("clear",&Feel::Mesh<Simplex<2>>::clear);
+  
+ class_<WorldComm>("WorldComm",init<>());
+
+ class_<ExporterEnsightGold<Mesh<Simplex<2>>,1>>("Exporter",init<WorldComm>())
+        .def("setMesh",&Exporter<Mesh<Simplex<2>>>::setMesh) 
+        .def("addRegions",&Exporter<Mesh<Simplex<2>>>::addRegions)
+        .def("save",&ExporterEnsightGold<Mesh<Simplex<2>>,1>::save);
+      
+        
+    
+    def("loadMesh",loadMesh3);
+    def("export",expo2<Mesh<Simplex<2>>,1>);
+    
+}
+\end{lstlisting}
+
+On écrit alors le script Python de la façon suivante :
+
+\begin{lstlisting}
+#!/usr/bin/python
+
+from mpi4py import MPI
+import libPyFeelpp
+import sys
+
+z=libPyFeelpp.Environment(sys.argv)
+
+s=libPyFeelpp.Simplex()
+m=libPyFeelpp.Mesh.new()
+
+l=libPyFeelpp.loadMesh(m)
+
+w=libPyFeelpp.Environment.worldComm()
+
+x=libPyFeelpp.export(l);
+
+\end{lstlisting}
+
+On peut alors retrouver les résultats dans $/data/"name"/feel/EnvTest.py/np\_1$ et on retrouve alors le maillage obtenu par exécution du programme mymesh.cpp.
+
+\includegraphics[scale=1]{Capture d’écran 2014-07-18 à 17.33.53.png} 
+
+\section{Travaux en cours}
+- Début du wrapping du programme ls\_laplacian dans $feelpp/quickstart$\\
+
+- Création d'une option dans Feel++ permettant de choisir ou non la compilation du module Python
+
+\section{Problèmes rencontrés en cours de semaine}
+- Soucis de wrapping avec les BOOST\_PARAMETER\_FUNCTION pour loadMesh et exporter \\
+
+- Problèmes avec la classe Exporter qui ne peut être instancié à cause de ses méthodes virtua
+\end{document}
+	
