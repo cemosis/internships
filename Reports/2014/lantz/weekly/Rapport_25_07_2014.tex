@@ -1,0 +1,343 @@
+\documentclass[12pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{enumerate}
+\usepackage{listingsutf8}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{url}
+
+
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ frame=single,
+ %linewidth=7.5cm,
+ framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=c++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ numbers=left,
+ numbersep=7pt,
+ inputencoding=utf8
+}
+
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Wrapping Python}
+\author {Thomas \emph{LANTZ}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+
+\begin{document}
+\maketitle 
+
+\section{Introduction}
+
+Pour cette huitième semaine de stage, après avoir achevé l'exemple provenant de mymesh.cpp, je me suis attaqué à un nouveau défi : le wrapping du programme de myintegrals.cpp , présenté si dessous :  \\
+
+\begin{lstlisting}
+Environment env( _argc=argc, _argv=argv,
+                     _about=about( _name="myintegrals" ,
+                                   _author="Feel++ Consortium",
+                                   _email="feelpp-devel@feelpp.org" ) );
+
+    /// [mesh]
+    // create the mesh (specify the dimension of geometric entity)
+    auto mesh = loadMesh( _mesh=new Mesh<Simplex<3>> );
+    /// [mesh]
+
+    /// [expression]
+    // our function to integrate
+    auto g = expr( soption(_name="functions.g") );
+    /// [expression]
+
+    /// [integrals]
+    // compute integral of f (global contribution)
+    auto intf_1 = integrate( _range = elements( mesh ),
+                                 _expr = g ).evaluate();
+
+    auto intf=integrate( _range = elements( mesh ),
+                                 _expr = g );
+    
+    
+    // compute integral f on boundary
+    auto intf_2 = integrate( _range = boundaryfaces( mesh ),
+                             _expr = g ).evaluate();
+    
+    // compute integral of grad f (global contribution)
+    auto grad_g = grad<2>(g);
+    auto intgrad_f = integrate( _range = elements( mesh ),
+                                _expr = grad_g ).evaluate();
+        // only the process with rank 0 prints to the screen to avoid clutter
+    if ( Environment::isMasterRank() )
+        std::cout << "int_Omega " << g << " = " << intf_1  << std::endl
+                  << "int_{boundary of Omega} " << g << " = " << intf_2 << std::endl
+                  << "int_Omega grad " << g << " = "
+                  << "int_Omega  " << grad_g << " = "
+                  << intgrad_f  << std::endl;
+\end{lstlisting}
+
+Pour se faire, on utilisera ce qui a déjà été fait précédemment à quoi on y ajoutera les classes et méthodes qu'il nous manquera.  
+
+\section{Récupération et actualisation des anciens travaux}
+
+Pour résoudre ce problème, on a besoin de définir des objets sur lesquels on a déjà travaillé ultérieurement mais avec des petites modifications de dimensions. Il faut alors entièrement réécrire et redéfinir ces objets avec les nouvelles valeurs.
+\vspace{0.5 cm}
+Ce qu'on fait juste ici :\\
+
+\begin{lstlisting}
+class_<Feel::detail::Environment,boost::noncopyable>("Environment", init<boost::python::list>()) 
+        .def("worldComm",&Feel::detail::Environment::worldComm,return_value_policy<copy_non_const_reference>())
+        .staticmethod("worldComm");
+
+    class_<Feel::Simplex<3>>("Simplex",init<>())
+        .def("dim",&Feel::Simplex<3>::dimension);
+
+    class_<Feel::Hypercube<3>>("Hypercube",init<>())
+        .def("dim",&Feel::Hypercube<3>::dimension);
+
+
+
+    class_<Feel::Mesh<Feel::Simplex<3>>,boost::shared_ptr<Feel::Mesh<Feel::Simplex<3>>>,boost::noncopyable>("Mesh",init<>())
+        .def("new",&Feel::Mesh<Simplex<3>>::New)
+        .staticmethod("new")
+        .def("clear",&Feel::Mesh<Simplex<3>>::clear);
+
+
+    def("loadMesh",loadMesh3);
+
+    class_<WorldComm>("WorldComm",init<>());
+
+
+
+
+    class_<ExporterEnsightGold<Mesh<Simplex<3>>,1>>("Exporter",init<WorldComm>())
+        .def("setMesh",&Exporter<Mesh<Simplex<3>>>::setMesh) 
+        .def("addRegions",&Exporter<Mesh<Simplex<3>>>::addRegions)
+        .def("save",&ExporterEnsightGold<Mesh<Simplex<3>>,1>::save);
+
+
+    def("new",New2); 
+    def("export",expo2<Mesh<Simplex<3>>,1>);
+\end{lstlisting}
+
+\section{Méthodes expr et soption  }
+
+On veut pour calculer les intégrales sur les différents domaines du maillage, que l'on définira plus tard, pouvoir entrer et stocker une expression mathématique afin de l'utiliser dans les calculs suivants.
+Pour se faire, on utilisera la ligne de code suivante :
+
+\begin{verbatim}
+auto g = expr( soption(_name="functions.g") );
+\end{verbatim}
+
+Il nous faut récupérer les 2 méthodes soption et expr afin de pouvoir recréer cet objet en Python.
+
+\subsection{soption}
+
+soption est défini dans environment.hpp, se trouvant dans $feelpp/feel/feelfilters/$, sous la forme d'une BOOST\_PARAMETER\_FUNCTION. On va alors utiliser la même méthode que la semaine dernière, c'est à dire définir une méthode plus simple appelant soption avec les arguments que l'on veut remplir.
+C'est d'ailleurs cette méthode que l'on utilisera pour toutes les BOOST\_PARAMETER\_FUNCTION de cet exemple, ainsi que pour les méthodes utilisant des arguments définis par défaut .
+
+On obtient :
+\begin{lstlisting}
+std::string soption_w (std::string name)
+{
+    return soption(_name=name);
+}
+\end{lstlisting}
+
+et dans la définition du module :
+
+\begin{lstlisting}
+def("soption",soption_w);
+\end{lstlisting}
+
+\subsection{expr}
+
+expr,quand à elle, est une méthode normale défini dans $feelpp/feel/feelvf/expr.hpp$.
+Cependant, elle utilise un argument défini par défaut .Ainsi si on se contente de la wrapper directement, il faudra quand même appelé la fonction avec une valeur pour cette argument.
+On peut alors la redéfinir de la sorte :
+
+\begin{lstlisting}
+Expr< GinacEx<2> > expr_w( std::string const& s )
+{
+    std::pair< ex, std::vector<GiNaC::symbol> > g = GiNaC::parse(s);
+    return Expr< GinacEx<2> >(  GinacEx<2>( g.first, g.second,"") );
+}
+\end{lstlisting}
+
+puis la wrapper :
+
+\begin{lstlisting}
+class_<Expr<GinacEx<2>>>("Expr",no_init);
+def("expr",expr_w);
+\end{lstlisting}
+
+
+Une fois ces deux méthodes réunis en Python, on obtient alors :
+
+\begin{lstlisting}
+g=libPyInteg.expr(libPyInteg.soption("functions.g"))
+\end{lstlisting}
+
+On pourra alors remplir cette expression avec l'option - -functions.g="$sin(pi*x)*cos(pi*y):x:y$" par exemple
+
+\section{elements et boundaryfaces}
+
+Une fois la fonction g défini, on veut calculer différentes valeurs de l'intégrale de celle-ci sur différentes parties du maillage. On a alors besoin des méthodes elements et boundaryfaces pour définir ces parties.\\
+Ici aussi, il y a des paramètres par défaut , on redéfinit donc ces méthodes de la façon suivante :
+
+\begin{lstlisting}
+template<typename MeshType>
+boost::tuple<mpl::size_t<MESH_ELEMENTS>,
+    typename MeshTraits<MeshType>::element_const_iterator,
+    typename MeshTraits<MeshType>::element_const_iterator>
+elements_w( MeshType const& mesh )
+{
+    typedef typename mpl::or_<is_shared_ptr<MeshType>, boost::is_pointer<MeshType> >::type is_ptr_or_shared_ptr;
+    return Feel::detail::elements( mesh, meshrank( mesh, is_ptr_or_shared_ptr() ), is_ptr_or_shared_ptr() );
+    //return elements( mesh, flag, is_ptr_or_shared_ptr() );
+}
+
+template<typename MeshType>
+boost::tuple<mpl::size_t<MESH_FACES>,
+      typename MeshTraits<MeshType>::location_face_const_iterator,
+      typename MeshTraits<MeshType>::location_face_const_iterator>
+      boundaryfaces_w( MeshType const& mesh  )
+{
+    return boundaryfaces(mesh);
+}
+\end{lstlisting}
+
+En Python , on obtient alors simplement :
+
+\begin{lstlisting}
+class_<elements_return_type>("Elements_return_type",no_init);
+    def("elements",elements_w<Mesh<Simplex<3>>>);
+
+class_<boundaryfaces_return_type>("Boundaryfaces_return_type",no_init);
+    def("boundaryfaces",boundaryfaces_w<Mesh<Simplex<3>>>);
+
+\end{lstlisting}
+
+Avec cela, on n'aura aucun problème à la compilation. Cependant, à l'exécution, Python va gentillement nous informer qu'il n'a aucune équivalence pour les types retournés.On doit les récupérer avec l'intégralité des templates remplis afin de les wrapper en Python.\\
+Dans ce but, je vais utiliser la méthode appelé "give bad to have good", également nommé originellement "une intégrale, ça rend un double en maths" par son auteur.
+
+Cette astuce consiste à donner un mauvais type de retour à la méthode, puis de compiler afin d'obtenir le type voulu dans une erreur.Je vais d'ailleurs utilisé plusieurs fois cette astuce afin de récupérer des types plutôt compliqués.Cela nous permet alors d'obtenir ici :
+\begin{lstlisting}
+typedef boost::tuples::tuple<mpl_::size_t<0ul>, boost::multi_index::detail::bidir_node_iterator<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::index_node_base<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double>, std::allocator<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> > > > > > > > > > >, boost::multi_index::detail::bidir_node_iterator<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::index_node_base<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double>, std::allocator<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> > > > > > > > > > >, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type> elements_return_type;
+
+typedef boost::tuples::tuple<mpl_::size_t<1ul>, boost::multi_index::detail::bidir_node_iterator<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::index_node_base<Feel::GeoElement2D<(unsigned short)3, Feel::Simplex<(unsigned short)2, (unsigned short)1, (unsigned short)3>, Feel::SubFaceOf<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> >, double>, std::allocator<Feel::GeoElement2D<(unsigned short)3, Feel::Simplex<(unsigned short)2, (unsigned short)1, (unsigned short)3>, Feel::SubFaceOf<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> >, double> > > > >, boost::multi_index::detail::bidir_node_iterator<boost::multi_index::detail::ordered_index_node<boost::multi_index::detail::index_node_base<Feel::GeoElement2D<(unsigned short)3, Feel::Simplex<(unsigned short)2, (unsigned short)1, (unsigned short)3>, Feel::SubFaceOf<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> >, double>, std::allocator<Feel::GeoElement2D<(unsigned short)3, Feel::Simplex<(unsigned short)2, (unsigned short)1, (unsigned short)3>, Feel::SubFaceOf<Feel::GeoElement3D<(unsigned short)3, Feel::Simplex<(unsigned short)3, (unsigned short)1, (unsigned short)3>, double> >, double> > > > >, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type, boost::tuples::null_type> boundaryfaces_return_type;
+
+\end{lstlisting}
+
+
+\section{integrate et evaluate}
+
+Maintenant que l'on possède tout les arguments nécessaires à l'appel de integrate, il est temps de s'attaquer aux deux dernières méthodes : integrate et evaluate.
+
+\subsection{integrate}
+
+integrate provient d'une BOOST\_PARAMETER\_FUNCTION, on va donc définir d'autres méthodes pour pouvoir la wrapper.
+\begin{lstlisting}
+integrate_return_type integrate_w ( elements_return_type e , Expr<GinacEx<2>> g)
+{
+    return integrate(_range=e,_expr=g);
+}
+
+integratebound_return_type integrate_w2 ( boundaryelements_return_type e , Expr<GinacEx<2>> g)
+{
+    return integrate(_range=e,_expr=g);
+}
+
+integrategrad_return_type integrate_w3 ( elements_return_type e,Expr<GinacMatrix<1,2,2>> grad)
+{
+    return integrate(_range=e,_expr=grad);
+}
+
+integrateboundfaces_return_type integrate_w4 ( boundaryfaces_return_type e , Expr<GinacEx<2>> g)
+{
+    return integrate(_range=e,_expr=g);
+}
+\end{lstlisting}
+
+Avec les types de retour récupérés de la même manière qu'avant
+
+\subsection{evaluate}
+
+evaluate étant appelé sur un objet renvoyé par integrate, comme on doit spécifier les types en Python, il faut définir autant d'evaluate que de type possible. J'ai également opté pour mettre l'objet renvoyé par integrate en paramètre, afin de simplifier le wrapping.\\
+On a alors :
+\begin{lstlisting}
+integrate_return_type::value_type evaluate_w (integrate_return_type i)
+{
+    return i.evaluate();
+}
+
+integratebound_return_type::value_type evaluate_w2 (integratebound_return_type i)
+{
+    return i.evaluate();
+}
+
+integrategrad_return_type::value_type evaluate_w3 (integrategrad_return_type i)
+{
+    return i.evaluate();
+}
+
+integrateboundfaces_return_type::value_type evaluate_w4 (integrateboundfaces_return_type i)
+{
+    return i.evaluate();
+}
+\end{lstlisting}
+
+On peut maintenant récupérer les résultats des calculs effectués et les afficher en Python.
+
+\begin{verbatim}
+2
+./IntegPy.py
+--functions.g=sin(pi*x)*cos(pi*y):x:y
+cos(y*pi)*sin(pi*x)
+elements:
+4.44473e-08
+boundaryfaces:
+4.56006e-08
+boundaryelements:
+-0.000649668
+[[cos(y*pi)*pi*cos(pi*x),-pi*sin(pi*x)*sin(y*pi)]]
+elements:
+-4.86176e-08     -1.27324            0
+\end{verbatim}
+
+\section{Travaux en cours}
+- Début du wrapping du programme mylaplacian.cpp
+
+- Création d'une option dans Feel++ permettant de choisir ou non la compilation du module Python
+
+- BOOST\_PREPROCESSOR
+
+\section{Problèmes rencontrés en cours de semaine}
+- Récupération des types de retour des méthodes avec les templates complétés \\
+
+\end{document}
+	
