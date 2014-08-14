@@ -1,0 +1,111 @@
+\documentclass[10pt]{article}
+ 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[francais]{babel}
+\usepackage{enumerate}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{tikz}
+
+\geometry {
+	left = 2.5cm,
+	right = 2.5cm,
+	bottom = 2.5cm ,
+	top = 2.5cm ,
+}
+
+\lstdefinestyle{customjava}{
+ belowcaptionskip=1\baselineskip,
+ breaklines=true,
+ %frame=single,
+ %linewidth=7.5cm,
+ %IMPORTANT marge
+ framexleftmargin=0mm,
+ %framexleftmargin=5mm,
+ %frameround=tttt,
+ %framexrightmargin=5mm,
+ xleftmargin=\parindent,
+ language=C++,
+ showstringspaces=false,
+ basicstyle=\footnotesize\ttfamily,
+ keywordstyle=\color{green!40!black},
+ ndkeywordstyle=\color{orange},
+ commentstyle=\color{purple!40!black},
+ identifierstyle=\color{blue},
+ stringstyle=\color{red},
+ %numbers=left,
+ %numbersep=7pt,
+}
+%06/06/14
+\frenchbsetup{StandardLists=true}
+\title {Rapport : Format de Fichiers}
+\author {Benjamin \emph{VANTHONG}}
+
+\lstset{style=customjava, emph={int,double,void, Double}, emphstyle=\color{red}, emph={[2]wavJava, Spectrum}, emphstyle=[2]\color{orange}}
+\begin{document}
+\maketitle 
+\section {Exportation des données}
+Après avoir implémenté l'exportation des données pour une seule solution la semaine dernière, j'ai étendu ces fonctionnalités pour plusieurs solutions. Le nom du tableau qui contient les données dans le fichier hdf5 est sous cette forme : \newline
+
+<nom de l'application>.<nom de la solution>.<type des données>.<noeud ou élément>\newline
+
+\textbf{exemple : }mylaplacian.u.scl.node
+\section {Entrées sortie standard}
+Désormais on utilisera les entrées sorties fournies par C++ pour écrire le fichier XDMF, c'est pourquoi au lieu d'utiliser le descripteur de fichier "FILE *" j'utilise la classe "ofstream".
+
+\section {Parallélisation de l'exporter}
+Maintenant que tout fonctionne en séquentiel, je me suis lancé dans l'implémentation de la parallélisation de mon exportateur. Pour ce faire, chaque processus écrira son propre fichier XDMF et HDF5, dont le nom des fichiers comportera le rang du processus et du nombre de processus. \newline
+
+\textbf{exemple : } mylaplacian-1\_0.xmf\newline
+
+Par contre, on ajoute le pas de temps pour les fichiers hdf5, en effet on aura un fichier différent par pas de temps et par processus.\newline
+
+\textbf{exemple : } mylaplacian-1\_0-0.h5\newline
+
+\subsection {Problèmes rencontrés} 
+\begin{enumerate}
+\item J'ai dû trier les points en fonctions de leur identifiant car XDMF ne prend pas en compte les identifiants.\newline
+\item Pour retrouver les nouveaux identifiants des noeuds qui composent un élément, j'utilise un tableau de hashage.
+\begin {lstlisting}
+//Declaration
+mutable std::map<size_type, size_type> M_newPointId ;
+
+//Remplissage dans writePoint()
+for (size_type i = 0 ; i < M_maxNumPoints ; i ++) 
+    M_newPointId[M_uintBuffer[i]] = i ;
+
+
+
+//Utilisation dans writeElement()
+for (p_it = M_meshOut->beginParts (); k < M_numParts ;  p_it++ , k++)
+{
+    auto elt_it = M_meshOut->beginElementWithMarker (p_it->first) ;
+    auto elt_en = M_meshOut->endElementWithMarker (p_it->first) ;
+    for ( ; elt_it != elt_en ; ++elt_it , i ++)
+    {
+        idsBuffer[i] = elt_it->id () ;
+        M_newElementId[idsBuffer[i]] = i ;
+        for ( size_type j = 0 ; j < M_elementNodes ; j ++ )
+            M_uintBuffer[j + M_elementNodes*i] = M_newPointId[elt_it->point(j).id()]  ; 
+    }
+}
+\end{lstlisting}
+\item Pour l'écriture des données sur les noeuds en parallèle, j'obtiens une erreur de segmentation quand je parcours les éléments locaux et fantômes. Pour résoudre ce problèmes j'ai dû ignorer ces éléments fantômes lors du parcours des éléments. Pour cela il faut changer les options de la méthode markedelements et mettre LOCAL\_ONLY au lieu de ALL.
+\begin{lstlisting}
+auto r = markedelements (M_meshOut, p_it->first, EntityProcessType::LOCAL_ONLY) ;
+\end{lstlisting}
+\end{enumerate}
+\section {Travail à faire}
+\begin{enumerate}
+\item Commenter le code (en anglais)
+\item Faire un partitionneur qui prends en entrée un fichier gmsh et en sortie un fichier hdf5, qui contient une entrée par partition.
+\end{enumerate}
+
+
+\end{document}
